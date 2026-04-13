@@ -25,41 +25,60 @@ function extractGeometry(scene) {
   const norms = [];
   const cols = [];
 
+  // 1. Force the scene to calculate all part positions relative to each other
+  scene.updateMatrixWorld(true);
+
   const box = new THREE.Box3().setFromObject(scene);
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
   const maxDim = Math.max(size.x, size.y, size.z);
-
-  const SCALE = 4 / maxDim; // 👈 auto fit
+  const SCALE = 4 / maxDim;
 
   scene.traverse((node) => {
     if (!node.isMesh) return;
 
-    const geometry = node.geometry;
+    // 2. Convert indexed geometry to "flat" geometry for gl.drawArrays
+    let geometry = node.geometry;
+    if (geometry.index) {
+      geometry = geometry.toNonIndexed();
+    }
+
     const position = geometry.attributes.position;
     const normal = geometry.attributes.normal;
-
     const color = new THREE.Color(0.8, 0.8, 0.85);
 
+    // Temp vectors for transformation
+    const v = new THREE.Vector3();
+    const n = new THREE.Vector3();
+    
+    // 3. Get the transformation matrix for THIS specific part
+    const matrix = node.matrixWorld;
+
     for (let i = 0; i < position.count; i++) {
+      // Apply the part's world position/rotation to the vertex
+      v.fromBufferAttribute(position, i);
+      v.applyMatrix4(matrix);
+
       verts.push(
-        (position.getX(i) - center.x) * SCALE,
-        (position.getY(i) - center.y) * SCALE,
-        (position.getZ(i) - center.z) * SCALE
+        (v.x - center.x) * SCALE,
+        (v.y - center.y) * SCALE,
+        (v.z - center.z) * SCALE
       );
 
       if (normal) {
-        norms.push(
-          normal.getX(i),
-          normal.getY(i),
-          normal.getZ(i)
-        );
+        // Normals only need rotation, not translation
+        n.fromBufferAttribute(normal, i);
+        n.transformDirection(matrix);
+        norms.push(n.x, n.y, n.z);
       } else {
         norms.push(0, 1, 0);
       }
 
       cols.push(color.r, color.g, color.b);
     }
+    
+    // Clean up the temporary non-indexed geometry
+    if (node.geometry.index) geometry.dispose();
   });
 
   return {
