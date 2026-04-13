@@ -1,0 +1,253 @@
+{
+  "accessors": [
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 65532,
+      "max": [
+        1.1992212533950806,
+        0.38303160667419434,
+        0.837226927280426
+      ],
+      "min": [
+        -0.43922123312950134,
+        -0.04284484684467316,
+        -0.9147730469703674
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 1,
+      "byteOffset": 786384,
+      "componentType": 5126,
+      "count": 65532,
+      "max": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "min": [
+        -1.0,
+        -1.0,
+        -1.0
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 65532,
+      "max": [
+        0.9372549057006836,
+        0.9372549057006836,
+        0.9372549057006836,
+        1.0
+      ],
+      "min": [
+        0.5490196347236633,
+        0.5490196347236633,
+        0.5490196347236633,
+        1.0
+      ],
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 0,
+      "componentType": 5125,
+      "count": 290667,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 1,
+      "byteOffset": 1572768,
+      "componentType": 5126,
+      "count": 5288,
+      "max": [
+        0.644469141960144,
+        0.38303160667419434,
+        -0.561198890209198
+      ],
+      "min": [
+        0.1130010187625885,
+        0.1065177321434021,
+        -0.9124107956886292
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 1,
+      "byteOffset": 1636224,
+      "componentType": 5126,
+      "count": 5288,
+      "max": [
+        1.0,
+        0.9997242093086243,
+        0.9929512739181519
+      ],
+      "min": [
+        -1.0,
+        -0.9995483160018921,
+        -0.9605280160903931
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 1048512,
+      "componentType": 5126,
+      "count": 5288,
+      "max": [
+        0.9372549057006836,
+        0.9372549057006836,
+        0.9372549057006836,
+        1.0
+      ],
+      "min": [
+        0.9372549057006836,
+        0.9372549057006836,
+        0.9372549057006836,
+        1.0
+      ],
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 0,
+      "byteOffset": 1162668,
+      "componentType": 5125,
+      "count": 28713,
+      "type": "SCALAR"
+    }
+  ],
+  "asset": {
+    "extras": {
+      "author": "Andre11230 (https://sketchfab.com/Andre11230)",
+      "license": "CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)",
+      "source": "https://sketchfab.com/3d-models/airbus-a330-b474aa79c03148f78f607ce816839824",
+      "title": "Airbus A330"
+    },
+    "generator": "Sketchfab-13.74.0",
+    "version": "2.0"
+  },
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 1277520,
+      "name": "floatBufferViews",
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 1699680,
+      "byteOffset": 1277520,
+      "byteStride": 12,
+      "name": "floatBufferViews",
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 1133120,
+      "byteOffset": 2977200,
+      "byteStride": 16,
+      "name": "floatBufferViews",
+      "target": 34962
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 4110320,
+      "uri": "cene.bin"
+    }
+  ],
+  "materials": [
+    {
+      "doubleSided": true,
+      "name": "Scene_-_Root",
+      "pbrMetallicRoughness": {
+        "metallicFactor": 0.0,
+        "roughnessFactor": 0.6
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Object_0",
+      "primitives": [
+        {
+          "attributes": {
+            "COLOR_0": 2,
+            "NORMAL": 1,
+            "POSITION": 0
+          },
+          "indices": 3,
+          "material": 0,
+          "mode": 4
+        }
+      ]
+    },
+    {
+      "name": "Object_1",
+      "primitives": [
+        {
+          "attributes": {
+            "COLOR_0": 6,
+            "NORMAL": 5,
+            "POSITION": 4
+          },
+          "indices": 7,
+          "material": 0,
+          "mode": 4
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "children": [
+        1
+      ],
+      "matrix": [
+        -4.440892098500626e-16,
+        0.00016896742454286517,
+        -1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.00016896742454286517,
+        0.0,
+        1.0,
+        -5.551115123125773e-17,
+        -4.440892098500626e-16,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "Sketchfab_model"
+    },
+    {
+      "children": [
+        2,
+        3
+      ],
+      "name": "A333.stl.cleaner.materialmerger.gles"
+    },
+    {
+      "mesh": 0,
+      "name": "Object_2"
+    },
+    {
+      "mesh": 1,
+      "name": "Object_3"
+    }
+  ],
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Sketchfab_Scene",
+      "nodes": [
+        0
+      ]
+    }
+  ]
+}
