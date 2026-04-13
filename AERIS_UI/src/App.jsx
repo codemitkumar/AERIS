@@ -284,7 +284,7 @@ const attitude = mat4.mul(
 );
 
 const model = mat4.mul(baseRotation, attitude);
-      const mvp = mat4.mul(mat4.perspective(0.9, W / H, 0.1, 50), mat4.mul(mat4.translate(0, -0.2, -6), model));
+      const mvp = mat4.mul(mat4.perspective(0.9, W / H, 0.1, 50), mat4.mul(mat4.translate(0, -0.07, -4.5), model));
       gl.uniformMatrix4fv(gl.getUniformLocation(prog, "uMVP"), false, mvp);
       gl.uniformMatrix4fv(gl.getUniformLocation(prog, "uModel"), false, model);
       gl.uniform3f(gl.getUniformLocation(prog, "uLight"), 2.0, 3.0, 2.0);
