@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/**)",
+      "Read(//c/ProgramData/**)",
+      "Bash(ls \"/c/Users/autho/AppData/Local/FlightGear/FlightGear/\"*/)",
+      "Bash(timeout 5 python main.py)",
+      "Bash(timeout 3 python main.py)"
+    ]
+  }
+}
