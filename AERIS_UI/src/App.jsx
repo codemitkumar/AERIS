@@ -276,7 +276,7 @@ function AircraftViewer({ flightData, showAlerts, modelData }) {
       gl.clearColor(0.04, 0.06, 0.10, 1);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       gl.useProgram(prog);
-const baseRotation = mat4.rotY(Math.PI / 2); // 👉 face right
+const baseRotation = mat4.rotY(Math.PI / 2); 
 
 const attitude = mat4.mul(
   mat4.rotZ(-flightData.bankAngle * Math.PI / 180), // roll
