@@ -6,4 +6,5 @@ echo Starting FlightGear (external FDM mode - JSBSim will drive it)...
   --airport=VIDP ^
   --runway=28 ^
   --fdm=null ^
+  --timeofday=noon ^
   --native-fdm=socket,in,60,127.0.0.1,5500,udp

@@ -7,13 +7,9 @@ import * as THREE from "three";
 function loadAircraftModel() {
   return new Promise((resolve, reject) => {
     const loader = new GLTFLoader();
-
     loader.load(
-      "/models/a330/Master.gltf", // ✅ from public folder
-      (gltf) => {
-        const geo = extractGeometry(gltf.scene);
-        resolve(geo);
-      },
+      "/models/a330/Master.gltf",
+      (gltf) => resolve(extractGeometry(gltf.scene)),
       undefined,
       reject
     );
@@ -21,162 +17,397 @@ function loadAircraftModel() {
 }
 
 function extractGeometry(scene) {
-  const verts = [];
-  const norms = [];
-  const cols = [];
-
-  // 1. Force the scene to calculate all part positions relative to each other
+  const verts = [], norms = [], cols = [];
   scene.updateMatrixWorld(true);
-
   const box = new THREE.Box3().setFromObject(scene);
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
-  const maxDim = Math.max(size.x, size.y, size.z);
-  const SCALE = 4 / maxDim;
+  const SCALE = 4 / Math.max(size.x, size.y, size.z);
 
   scene.traverse((node) => {
     if (!node.isMesh) return;
-
-    // 2. Convert indexed geometry to "flat" geometry for gl.drawArrays
     let geometry = node.geometry;
-    if (geometry.index) {
-      geometry = geometry.toNonIndexed();
-    }
-
+    if (geometry.index) geometry = geometry.toNonIndexed();
     const position = geometry.attributes.position;
     const normal = geometry.attributes.normal;
     const color = new THREE.Color(0.8, 0.8, 0.85);
-
-    // Temp vectors for transformation
-    const v = new THREE.Vector3();
-    const n = new THREE.Vector3();
-    
-    // 3. Get the transformation matrix for THIS specific part
+    const v = new THREE.Vector3(), n = new THREE.Vector3();
     const matrix = node.matrixWorld;
-
     for (let i = 0; i < position.count; i++) {
-      // Apply the part's world position/rotation to the vertex
-      v.fromBufferAttribute(position, i);
-      v.applyMatrix4(matrix);
-
-      verts.push(
-        (v.x - center.x) * SCALE,
-        (v.y - center.y) * SCALE,
-        (v.z - center.z) * SCALE
-      );
-
+      v.fromBufferAttribute(position, i).applyMatrix4(matrix);
+      verts.push((v.x - center.x) * SCALE, (v.y - center.y) * SCALE, (v.z - center.z) * SCALE);
       if (normal) {
-        // Normals only need rotation, not translation
-        n.fromBufferAttribute(normal, i);
-        n.transformDirection(matrix);
+        n.fromBufferAttribute(normal, i).transformDirection(matrix);
         norms.push(n.x, n.y, n.z);
       } else {
         norms.push(0, 1, 0);
       }
-
       cols.push(color.r, color.g, color.b);
     }
-    
-    // Clean up the temporary non-indexed geometry
     if (node.geometry.index) geometry.dispose();
   });
-
-  return {
-    verts: new Float32Array(verts),
-    norms: new Float32Array(norms),
-    cols: new Float32Array(cols),
-    count: verts.length / 3,
-  };
+  return { verts: new Float32Array(verts), norms: new Float32Array(norms), cols: new Float32Array(cols), count: verts.length / 3 };
 }
-// ─── Simulated JSBSim-style flight data stream ───────────────────────────────
-function useFlightData() {
-  const [data, setData] = useState({
-    bankAngle: 0,
-    pitchAngle: 2,
-    headingAngle: 45,
-    altitude: 35000,
-    verticalSpeed: 0,
-    airspeed: 480,
-    engineN1L: 88,
-    engineN1R: 88,
-    engineN2L: 92,
-    engineN2R: 92,
-    fuelLeft: 18200,
-    fuelRight: 18050,
-    hydraulicA: 3000,
-    hydraulicB: 3000,
-    apu: false,
-    gearDown: false,
-    flapAngle: 0,
-    spoilers: false,
-    autoThrottle: true,
-    autopilot: true,
-    pitotHeat: true,
-    stall: false,
-    overspeed: false,
-    gpws: false,
-    tcas: false,
-  });
-  const t = useRef(0);
+
+// ─── Real JSBSim WebSocket Hook ───────────────────────────────────────────────
+const _DEFAULT_STATE = {
+  bankAngle: 0, pitchAngle: 0, headingAngle: 0,
+  alphaAngle: 0, betaAngle: 0,
+  rollRate: 0, pitchRate: 0, yawRate: 0,
+  altitude: 0, verticalSpeed: 0, airspeed: 0, groundspeed: 0,
+  engineN1L: 0, engineN1R: 0, engineN2L: 0, engineN2R: 0,
+  engineRPM0: 0,
+  fuelLeft: 0, fuelRight: 0, stallNorm: 0,
+  stall: false, overspeed: false, gpws: false, tcas: false,
+  hydraulicA: 3000, hydraulicB: 3000, apu: false, gearDown: false,
+  flapAngle: 0, spoilers: false, autoThrottle: false, autopilot: false, pitotHeat: false,
+};
+
+function useJSBSimData() {
+  const [data, setData] = useState(_DEFAULT_STATE);
+  const [connected, setConnected] = useState(false);
+  const wsRef = useRef(null);
+  const timerRef = useRef(null);
 
   useEffect(() => {
-    const id = setInterval(() => {
-      t.current += 0.05;
-      setData(prev => {
-        const bank = Math.sin(t.current * 0.3) * 18 + Math.sin(t.current * 0.7) * 6;
-        const pitch = Math.sin(t.current * 0.2) * 4 + 2;
-        const vs = Math.sin(t.current * 0.25) * 120;
-        const spd = 480 + Math.sin(t.current * 0.4) * 8;
-        const n1L = 88 + Math.sin(t.current * 0.15) * 2;
-        const n1R = 88 + Math.sin(t.current * 0.18 + 0.5) * 2;
-        // Simulate occasional alert conditions
-        const stall = spd < 478 && Math.abs(pitch) > 5.5;
-        const overspeed = spd > 490;
-        const gpws = Math.abs(bank) > 14;
-        const tcas = t.current > 12 && t.current < 14;
-        return {
-          ...prev,
-          bankAngle: bank,
-          pitchAngle: pitch,
-          headingAngle: (prev.headingAngle + 0.02) % 360,
-          altitude: 35000 + Math.sin(t.current * 0.1) * 80,
-          verticalSpeed: vs,
-          airspeed: spd,
-          engineN1L: n1L,
-          engineN1R: n1R,
-          fuelLeft: Math.max(0, prev.fuelLeft - 0.3),
-          fuelRight: Math.max(0, prev.fuelRight - 0.28),
-          stall,
-          overspeed,
-          gpws,
-          tcas,
-        };
-      });
-    }, 80);
-    return () => clearInterval(id);
+    function connect() {
+      try { wsRef.current?.close(); } catch (_) {}
+      const ws = new WebSocket("ws://localhost:8765");
+      wsRef.current = ws;
+
+      ws.onopen = () => { setConnected(true); clearTimeout(timerRef.current); };
+      ws.onclose = () => { setConnected(false); timerRef.current = setTimeout(connect, 2000); };
+      ws.onerror = () => ws.close();
+
+      ws.onmessage = ({ data: raw }) => {
+        try {
+          const s = JSON.parse(raw);
+          const d = s.derived || {};
+          const j = s.jsbsim  || {};
+          const e = s.engines  || [];
+          const t = s.tanks    || [];
+
+          const ias  = j["velocities/vc-kts"]      ?? 0;
+          const sn   = j["aero/stall-hyst-norm"]   ?? 0;
+          const bank = d.roll_deg ?? 0;
+          const pitch = d.pitch_deg ?? 0;
+
+          setData({
+            bankAngle:    bank,
+            pitchAngle:   pitch,
+            headingAngle: d.heading_deg     ?? 0,
+            alphaAngle:   d.alpha_deg       ?? 0,
+            betaAngle:    d.beta_deg        ?? 0,
+            rollRate:     d.roll_rate_dps   ?? 0,
+            pitchRate:    d.pitch_rate_dps  ?? 0,
+            yawRate:      d.yaw_rate_dps    ?? 0,
+            altitude:     j["position/h-sl-ft"]     ?? 0,
+            verticalSpeed: d.vertical_speed_fpm     ?? 0,
+            airspeed:     ias,
+            groundspeed:  d.groundspeed_kts ?? 0,
+            engineN1L:    e[0]?.n1_pct      ?? 0,
+            engineN1R:    e[1]?.n1_pct      ?? 0,
+            engineN2L:    e[0]?.n2_pct      ?? 0,
+            engineN2R:    e[1]?.n2_pct      ?? 0,
+            engineRPM0:   e[0]?.rpm         ?? 0,
+            fuelLeft:     t[0]?.contents_lbs ?? 0,
+            fuelRight:    t[1]?.contents_lbs ?? 0,
+            stallNorm:    sn,
+            stall:        sn > 0.85,
+            overspeed:    ias > 160,             // c172p Vne ≈ 163 kts
+            gpws:         Math.abs(bank) > 45,   // extreme bank
+            tcas: false,
+            hydraulicA: 3000, hydraulicB: 3000, apu: false,
+            gearDown:     (j["gear/gear-pos-norm[0]"] ?? 0) > 0.5,
+            flapAngle:    j["fcs/flap-pos-deg"] ?? 0,
+            spoilers: false, autoThrottle: false, autopilot: false, pitotHeat: false,
+          });
+        } catch (_) {}
+      };
+    }
+
+    connect();
+    return () => { clearTimeout(timerRef.current); wsRef.current?.close(); };
   }, []);
 
-  return data;
+  return { data, connected };
 }
 
-// ─── Active Alerts ────────────────────────────────────────────────────────────
+// ─── Alert definitions ────────────────────────────────────────────────────────
 function getAlerts(fd) {
   const alerts = [];
-  if (fd.stall) alerts.push({ id: "STALL", severity: "critical", msg: "STALL WARNING", detail: "Increase speed immediately" });
-  if (fd.overspeed) alerts.push({ id: "OVSPD", severity: "critical", msg: "OVERSPEED", detail: "Reduce thrust — VMO exceeded" });
-  if (fd.gpws) alerts.push({ id: "GPWS", severity: "warning", msg: "BANK ANGLE", detail: "Excessive bank — reduce roll" });
-  if (fd.tcas) alerts.push({ id: "TCAS", severity: "advisory", msg: "TCAS RA", detail: "Traffic advisory — climb" });
+  if (fd.stall)
+    alerts.push({ id: "STALL",  severity: "critical", msg: "STALL WARNING",   detail: "Increase speed immediately" });
+  if (fd.overspeed)
+    alerts.push({ id: "OVSPD",  severity: "critical", msg: "OVERSPEED",        detail: "Reduce thrust — Vne exceeded" });
+  if (fd.gpws)
+    alerts.push({ id: "BANK",   severity: "critical", msg: "BANK ANGLE",       detail: "Excessive bank — reduce roll immediately" });
+  if (fd.pitchAngle > 15)
+    alerts.push({ id: "NOSEUP", severity: "warning",  msg: "NOSE HIGH",        detail: `Pitch ${fd.pitchAngle.toFixed(1)}° — reduce back pressure` });
+  if (fd.pitchAngle < -10)
+    alerts.push({ id: "NOSDN",  severity: "warning",  msg: "NOSE LOW",         detail: `Pitch ${fd.pitchAngle.toFixed(1)}° — increase back pressure` });
+  if (fd.alphaAngle > 12 && !fd.stall)
+    alerts.push({ id: "HIAOA",  severity: "warning",  msg: "HIGH ALPHA",       detail: `AoA ${fd.alphaAngle.toFixed(1)}° — approaching stall` });
+  if (fd.airspeed > 0 && fd.airspeed < 52 && !fd.stall)
+    alerts.push({ id: "LOWSPD", severity: "warning",  msg: "LOW AIRSPEED",     detail: `IAS ${fd.airspeed.toFixed(0)} kts — near stall speed` });
+  if (fd.tcas)
+    alerts.push({ id: "TCAS",   severity: "advisory", msg: "TCAS RA",          detail: "Traffic advisory — climb" });
   return alerts;
 }
 
+// ─── Artificial Horizon (SVG) ─────────────────────────────────────────────────
+function ArtificialHorizon({ bankAngle, pitchAngle }) {
+  const SIZE = 148;
+  const r = SIZE / 2;
+  const PX_PER_DEG = SIZE / 48; // 48° spans full height
+  const offset = -pitchAngle * PX_PER_DEG;  // positive pitch = nose up = horizon moves down
 
-// ─── 3D Aircraft WebGL Renderer ──────────────────────────────────────────────
+  const bankTicks = [-60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60];
+
+  // Triangle indicator pointing inward from the bank scale arc
+  const triRad = (-bankAngle - 90) * Math.PI / 180;
+  const arcR = r - 9;
+  const tx = r + arcR * Math.cos(triRad);
+  const ty = r + arcR * Math.sin(triRad);
+  const nx = Math.cos(triRad), ny = Math.sin(triRad);
+  const px = -ny * 5, py = nx * 5;
+
+  return (
+    <svg width={SIZE} height={SIZE} style={{ display: "block", margin: "0 auto" }}>
+      <defs>
+        <clipPath id="ah-clip"><circle cx={r} cy={r} r={r - 10} /></clipPath>
+      </defs>
+
+      {/* Rotating attitude ball */}
+      <g transform={`rotate(${-bankAngle}, ${r}, ${r})`} clipPath="url(#ah-clip)">
+        <rect x={-SIZE} y={-SIZE * 2 + r - offset} width={SIZE * 5} height={SIZE * 3} fill="#0a2540" />
+        <rect x={-SIZE} y={r - offset} width={SIZE * 5} height={SIZE * 3} fill="#3d1e08" />
+        <line x1={-SIZE} y1={r - offset} x2={SIZE * 3} y2={r - offset} stroke="#dde8f0" strokeWidth="2.5" />
+        {/* Pitch graduation marks */}
+        {[-20, -10, 10, 20].map(deg => {
+          const yy = r - offset - deg * PX_PER_DEG;
+          const halfW = deg % 20 === 0 ? 22 : 14;
+          return (
+            <g key={deg}>
+              <line x1={r - halfW} y1={yy} x2={r + halfW} y2={yy} stroke="rgba(220,230,240,0.55)" strokeWidth="1.5" />
+              <text x={r + halfW + 3} y={yy + 4} fill="rgba(180,200,220,0.5)" fontSize="7" fontFamily="monospace">{Math.abs(deg)}</text>
+            </g>
+          );
+        })}
+      </g>
+
+      {/* Bank angle scale ticks (fixed) */}
+      {bankTicks.map(deg => {
+        const rad = (deg - 90) * Math.PI / 180;
+        const inner = r - 9;
+        const outer = r - 9 - (deg % 30 === 0 ? 10 : 6);
+        return (
+          <line key={deg}
+            x1={r + inner * Math.cos(rad)} y1={r + inner * Math.sin(rad)}
+            x2={r + outer * Math.cos(rad)} y2={r + outer * Math.sin(rad)}
+            stroke={deg === 0 ? "#60aadd" : "#2a4060"}
+            strokeWidth={deg === 0 ? 2.5 : 1}
+          />
+        );
+      })}
+
+      {/* Moving bank triangle */}
+      <polygon
+        points={`${tx},${ty} ${tx - nx * 9 + px},${ty - ny * 9 + py} ${tx - nx * 9 - px},${ty - ny * 9 - py}`}
+        fill="#ffcc00"
+      />
+
+      {/* Fixed miniature aircraft symbol */}
+      <line x1={r - 36} y1={r} x2={r - 14} y2={r} stroke="#ffcc00" strokeWidth="3" strokeLinecap="round" />
+      <line x1={r + 14} y1={r} x2={r + 36} y2={r} stroke="#ffcc00" strokeWidth="3" strokeLinecap="round" />
+      <line x1={r - 5}  y1={r + 9} x2={r + 5} y2={r + 9} stroke="#ffcc00" strokeWidth="2.5" strokeLinecap="round" />
+      <circle cx={r} cy={r} r={2.5} fill="#ffcc00" />
+
+      {/* Outer bezel */}
+      <circle cx={r} cy={r} r={r - 2} fill="none" stroke="#0d1e30" strokeWidth="5" />
+      <circle cx={r} cy={r} r={r - 2} fill="none" stroke="#1a3a50" strokeWidth="1" />
+    </svg>
+  );
+}
+
+// ─── Attitude Reference Panel (always-visible right sidebar) ──────────────────
+function AttitudeReferencePanel({ fd, connected }) {
+  const bank  = fd.bankAngle;
+  const pitch = fd.pitchAngle;
+  const alpha = fd.alphaAngle;
+  const beta  = fd.betaAngle;
+
+  const bankColor  = Math.abs(bank) > 45 ? "#ff3333" : Math.abs(bank) > 25 ? "#ffaa00" : "#40e0a0";
+  const pitchColor = (pitch > 15 || pitch < -10) ? "#ff3333" : Math.abs(pitch) > 8 ? "#ffaa00" : "#40e0a0";
+  const alphaColor = alpha > 12 ? "#ff3333" : alpha > 8 ? "#ffaa00" : "#40e0a0";
+  const betaColor  = Math.abs(beta) > 10 ? "#ffaa00" : "#40e0a0";
+  const unusualAttitude = Math.abs(bank) > 30 || pitch > 15 || pitch < -10 || alpha > 12;
+
+  const Lbl = ({ children }) => (
+    <div style={{ fontSize: 7, color: "#2a4060", letterSpacing: 2, fontFamily: "'Share Tech Mono',monospace", marginBottom: 1 }}>
+      {children}
+    </div>
+  );
+
+  const BigNum = ({ val, decimals = 1, color, unit, fontSize = 20 }) => (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 3, lineHeight: 1 }}>
+      <span style={{ fontFamily: "'Share Tech Mono',monospace", fontSize, fontWeight: 700, color, letterSpacing: 1 }}>
+        {val >= 0 && val !== Math.abs(val) ? "" : ""}
+        {(val >= 0 ? "+" : "") + val.toFixed(decimals)}
+      </span>
+      <span style={{ color: "#2a4060", fontSize: 10 }}>{unit}</span>
+    </div>
+  );
+
+  const hdg = ((fd.headingAngle % 360) + 360) % 360;
+
+  return (
+    <div style={{
+      width: 195, flexShrink: 0,
+      background: "#030a14",
+      borderLeft: "1px solid #0d1e30",
+      display: "flex", flexDirection: "column",
+      padding: "10px 10px 8px",
+      gap: 7,
+      overflowY: "auto",
+    }}>
+
+      {/* Header */}
+      <div style={{ textAlign: "center", borderBottom: "1px solid #0d1a28", paddingBottom: 7 }}>
+        <div style={{ fontSize: 9, color: "#3a6090", letterSpacing: 4, fontFamily: "'Share Tech Mono',monospace" }}>
+          ATTITUDE REF
+        </div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, marginTop: 4 }}>
+          <div style={{ width: 5, height: 5, borderRadius: "50%", background: connected ? "#00cc55" : "#cc3333", boxShadow: connected ? "0 0 5px #00cc55" : "none" }} />
+          <span style={{ fontSize: 7, color: connected ? "#00aa44" : "#aa2222", letterSpacing: 2, fontFamily: "monospace" }}>
+            {connected ? "JSBSim LIVE" : "NO SIGNAL"}
+          </span>
+        </div>
+      </div>
+
+      {/* Artificial Horizon */}
+      <div>
+        <ArtificialHorizon bankAngle={bank} pitchAngle={pitch} />
+      </div>
+
+      {/* Primary attitude readouts */}
+      <div style={{ borderTop: "1px solid #0d1a28", paddingTop: 7, display: "flex", flexDirection: "column", gap: 7 }}>
+
+        {/* Bank */}
+        <div>
+          <Lbl>BANK (ROLL)</Lbl>
+          <BigNum val={bank} color={bankColor} unit="°" />
+          {/* Bank bar */}
+          <div style={{ height: 3, background: "#091520", borderRadius: 2, marginTop: 3, position: "relative", overflow: "hidden" }}>
+            <div style={{ position: "absolute", left: "50%", width: `${Math.min(50, Math.abs(bank) / 90 * 100)}%`, transform: bank >= 0 ? "none" : "translateX(-100%)", height: "100%", background: bankColor, borderRadius: 2, transition: "width 0.1s" }} />
+            <div style={{ position: "absolute", left: "50%", top: 0, width: 1, height: "100%", background: "#1a3050" }} />
+          </div>
+        </div>
+
+        {/* Pitch */}
+        <div>
+          <Lbl>PITCH</Lbl>
+          <BigNum val={pitch} color={pitchColor} unit="°" />
+        </div>
+
+        {/* Heading */}
+        <div>
+          <Lbl>HEADING (TRUE)</Lbl>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
+            <span style={{ fontFamily: "'Share Tech Mono',monospace", fontSize: 18, fontWeight: 700, color: "#70aadd", letterSpacing: 1 }}>
+              {hdg.toFixed(1)}
+            </span>
+            <span style={{ color: "#2a4060", fontSize: 10 }}>°</span>
+          </div>
+        </div>
+
+        {/* Angle of Attack */}
+        <div>
+          <Lbl>ANGLE OF ATTACK</Lbl>
+          <BigNum val={alpha} color={alphaColor} unit="°" fontSize={18} />
+          {fd.stallNorm > 0.5 && (
+            <div style={{ fontSize: 7, color: fd.stallNorm > 0.85 ? "#ff3333" : "#ffaa00", letterSpacing: 1, marginTop: 2, fontFamily: "monospace" }}>
+              STALL {(fd.stallNorm * 100).toFixed(0)}%
+            </div>
+          )}
+        </div>
+
+        {/* Sideslip */}
+        <div>
+          <Lbl>SIDESLIP (β)</Lbl>
+          <BigNum val={beta} color={betaColor} unit="°" fontSize={16} />
+        </div>
+      </div>
+
+      {/* Secondary data */}
+      <div style={{ borderTop: "1px solid #0d1a28", paddingTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+        {[
+          { lbl: "IAS", val: fd.airspeed.toFixed(0),  unit: "kts" },
+          { lbl: "ALT", val: Math.round(fd.altitude).toString(),   unit: "ft" },
+          { lbl: "V/S", val: (fd.verticalSpeed >= 0 ? "+" : "") + Math.round(fd.verticalSpeed), unit: "fpm" },
+        ].map(({ lbl, val, unit }) => (
+          <div key={lbl} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+            <span style={{ fontSize: 7, color: "#2a4060", fontFamily: "monospace", letterSpacing: 2 }}>{lbl}</span>
+            <span style={{ fontSize: 12, color: "#5090c0", fontFamily: "monospace", fontWeight: 600 }}>
+              {val}<span style={{ fontSize: 7, color: "#1a3050", marginLeft: 2 }}>{unit}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Rate indicators */}
+      <div style={{ borderTop: "1px solid #0d1a28", paddingTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+        <Lbl>RATES (°/s)</Lbl>
+        {[
+          { lbl: "ROLL", val: fd.rollRate },
+          { lbl: "PTCH", val: fd.pitchRate },
+        ].map(({ lbl, val }) => {
+          const absVal = Math.abs(val);
+          const rc = absVal > 15 ? "#ffaa00" : "#2a5070";
+          return (
+            <div key={lbl} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+              <span style={{ fontSize: 7, color: "#1a3050", fontFamily: "monospace", letterSpacing: 2 }}>{lbl}</span>
+              <span style={{ fontSize: 11, color: rc, fontFamily: "monospace" }}>
+                {(val >= 0 ? "+" : "") + val.toFixed(1)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Spatial Disorientation Warning */}
+      <div style={{ marginTop: "auto", borderTop: "1px solid #0d1a28", paddingTop: 7, textAlign: "center" }}>
+        {unusualAttitude ? (
+          <div style={{
+            background: "rgba(255,30,30,0.10)",
+            border: "1px solid rgba(255,30,30,0.50)",
+            borderRadius: 5, padding: "7px 6px",
+            animation: "alertPulse 0.6s ease-in-out infinite alternate",
+          }}>
+            <div style={{ fontSize: 9, color: "#ff4444", letterSpacing: 2, fontWeight: 700, fontFamily: "monospace", marginBottom: 3 }}>
+              UNUSUAL ATTITUDE
+            </div>
+            <div style={{ fontSize: 7, color: "#cc3333", letterSpacing: 1, lineHeight: 1.5, fontFamily: "monospace" }}>
+              TRUST YOUR INSTRUMENTS<br />DISREGARD BODY SENSATIONS
+            </div>
+          </div>
+        ) : (
+          <div style={{ fontSize: 7, color: "#1a3050", letterSpacing: 1, lineHeight: 1.7, fontFamily: "monospace" }}>
+            TRUST YOUR INSTRUMENTS<br />AVIATE · NAVIGATE · COMMUNICATE
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── 3D Aircraft WebGL Renderer ───────────────────────────────────────────────
 function AircraftViewer({ flightData, showAlerts, modelData }) {
-  const canvasRef = useRef(null);
-  const glRef = useRef(null);
+  const canvasRef  = useRef(null);
+  const glRef      = useRef(null);
   const programRef = useRef(null);
   const buffersRef = useRef(null);
-  const animRef = useRef(null);
+  const animRef    = useRef(null);
 
   const buildProgram = useCallback((gl) => {
     const vs = `attribute vec3 aPos;attribute vec3 aNorm;attribute vec3 aColor;uniform mat4 uMVP;uniform mat4 uModel;varying vec3 vNorm;varying vec3 vColor;void main(){vNorm=normalize(mat3(uModel)*aNorm);vColor=aColor;gl_Position=uMVP*vec4(aPos,1.0);}`;
@@ -238,7 +469,7 @@ function AircraftViewer({ flightData, showAlerts, modelData }) {
     rotY: (a) => { const c = Math.cos(a), s = Math.sin(a); return new Float32Array([c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]); },
     rotZ: (a) => { const c = Math.cos(a), s = Math.sin(a); return new Float32Array([c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]); },
     translate: (tx, ty, tz) => new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, tx, ty, tz, 1]),
-    mul: (a, b) => { const m = new Float32Array(16); for (let r = 0; r < 4; r++)for (let c = 0; c < 4; c++)for (let k = 0; k < 4; k++)m[r + c * 4] += a[r + k * 4] * b[k + c * 4]; return m; }
+    mul: (a, b) => { const m = new Float32Array(16); for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) for (let k = 0; k < 4; k++) m[r + c * 4] += a[r + k * 4] * b[k + c * 4]; return m; }
   };
 
   useEffect(() => {
@@ -256,8 +487,7 @@ function AircraftViewer({ flightData, showAlerts, modelData }) {
   useEffect(() => {
     const gl = glRef.current;
     if (!gl) return;
-    const geo = modelData || buildFallbackGeo();
-    buffersRef.current = uploadGeo(gl, geo);
+    buffersRef.current = uploadGeo(gl, modelData || buildFallbackGeo());
   }, [modelData, buildFallbackGeo, uploadGeo]);
 
   useEffect(() => {
@@ -276,23 +506,21 @@ function AircraftViewer({ flightData, showAlerts, modelData }) {
       gl.clearColor(0.04, 0.06, 0.10, 1);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       gl.useProgram(prog);
-const baseRotation = mat4.rotY(Math.PI / 2); 
-
-const attitude = mat4.mul(
-  mat4.rotZ(-flightData.bankAngle * Math.PI / 180), // roll
-  mat4.rotX(flightData.pitchAngle * Math.PI / 180)  // pitch
-);
-
-const model = mat4.mul(baseRotation, attitude);
+      const baseRotation = mat4.rotY(Math.PI / 2);
+      const attitude = mat4.mul(
+        mat4.rotZ(-flightData.bankAngle * Math.PI / 180),
+        mat4.rotX(-flightData.pitchAngle * Math.PI / 180)
+      );
+      const model = mat4.mul(baseRotation, attitude);
       const mvp = mat4.mul(mat4.perspective(0.9, W / H, 0.1, 50), mat4.mul(mat4.translate(0, -0.07, -4.5), model));
-      gl.uniformMatrix4fv(gl.getUniformLocation(prog, "uMVP"), false, mvp);
+      gl.uniformMatrix4fv(gl.getUniformLocation(prog, "uMVP"),   false, mvp);
       gl.uniformMatrix4fv(gl.getUniformLocation(prog, "uModel"), false, model);
       gl.uniform3f(gl.getUniformLocation(prog, "uLight"), 2.0, 3.0, 2.0);
       gl.uniform1f(gl.getUniformLocation(prog, "uAlertPulse"), hasCritical ? (Math.sin(now * 0.008) * 0.5 + 0.5) : 0);
       const aPos = gl.getAttribLocation(prog, "aPos"), aNorm = gl.getAttribLocation(prog, "aNorm"), aColor = gl.getAttribLocation(prog, "aColor");
-      gl.bindBuffer(gl.ARRAY_BUFFER, bufs.vb); gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufs.vb); gl.enableVertexAttribArray(aPos);  gl.vertexAttribPointer(aPos,  3, gl.FLOAT, false, 0, 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, bufs.nb); gl.enableVertexAttribArray(aNorm); gl.vertexAttribPointer(aNorm, 3, gl.FLOAT, false, 0, 0);
-      gl.bindBuffer(gl.ARRAY_BUFFER, bufs.cb); gl.enableVertexAttribArray(aColor); gl.vertexAttribPointer(aColor, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufs.cb); gl.enableVertexAttribArray(aColor);gl.vertexAttribPointer(aColor,3, gl.FLOAT, false, 0, 0);
       gl.drawArrays(gl.TRIANGLES, 0, bufs.count);
       animRef.current = requestAnimationFrame(render);
     };
@@ -303,18 +531,16 @@ const model = mat4.mul(baseRotation, attitude);
   return <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block", borderRadius: 8 }} />;
 }
 
-
-// ─── Alert Overlay (Monitoring pilot only) ───────────────────────────────────
+// ─── Alert Overlay ────────────────────────────────────────────────────────────
 function AlertOverlay({ alerts }) {
   if (!alerts.length) return null;
-  const colors = { critical: "#ff2020", warning: "#ff9900", advisory: "#ffdd00" };
+  const colors   = { critical: "#ff2020", warning: "#ff9900", advisory: "#ffdd00" };
   const bgColors = { critical: "rgba(255,20,20,0.12)", warning: "rgba(255,140,0,0.10)", advisory: "rgba(255,220,0,0.08)" };
   return (
     <div style={{ position: "absolute", top: 12, left: 12, right: 12, zIndex: 20, display: "flex", flexDirection: "column", gap: 6, pointerEvents: "none" }}>
       {alerts.map(a => (
         <div key={a.id} style={{
-          background: bgColors[a.severity],
-          border: `1px solid ${colors[a.severity]}`,
+          background: bgColors[a.severity], border: `1px solid ${colors[a.severity]}`,
           borderRadius: 6, padding: "6px 12px",
           display: "flex", alignItems: "center", gap: 12,
           animation: a.severity === "critical" ? "alertPulse 0.6s ease-in-out infinite alternate" : "none",
@@ -322,8 +548,8 @@ function AlertOverlay({ alerts }) {
         }}>
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: colors[a.severity], boxShadow: `0 0 8px ${colors[a.severity]}` }} />
           <div>
-            <div style={{ color: colors[a.severity], fontFamily: "'Courier New', monospace", fontWeight: 700, fontSize: 13, letterSpacing: 2 }}>{a.msg}</div>
-            <div style={{ color: colors[a.severity], opacity: 0.75, fontSize: 11, fontFamily: "'Courier New', monospace" }}>{a.detail}</div>
+            <div style={{ color: colors[a.severity], fontFamily: "'Courier New',monospace", fontWeight: 700, fontSize: 13, letterSpacing: 2 }}>{a.msg}</div>
+            <div style={{ color: colors[a.severity], opacity: 0.75, fontSize: 11, fontFamily: "'Courier New',monospace" }}>{a.detail}</div>
           </div>
           <div style={{ marginLeft: "auto", color: colors[a.severity], fontFamily: "monospace", fontSize: 10, opacity: 0.8 }}>{a.id}</div>
         </div>
@@ -332,11 +558,10 @@ function AlertOverlay({ alerts }) {
   );
 }
 
-
 // ─── Role Selection Screen ────────────────────────────────────────────────────
 function RoleSelector({ onSelect }) {
   const [selectedResponsibility, setSelectedResponsibility] = useState("pm");
-  const [roleResponsibilities, setRoleResponsibilities] = useState({
+  const roleResponsibilities = {
     pf: [
       "Controls aircraft",
       "Manages flight path",
@@ -349,138 +574,95 @@ function RoleSelector({ onSelect }) {
       "Manages alerts",
       "WILL RECEIVE ALL SYSTEM ALERTS - MUST PRIORITIZE ALERTS AND COMMUNICATE CRITICAL INFORMATION TO PF & AIR TRAFFIC CONTROL"
     ]
-  });
+  };
 
-  const [flyingMantra, setFlyingMantra] = useState("AVIATE · NAVIGATE · COMMUNICATE");
-
- const handleRoleSelect = (role) => {
-    setSelectedResponsibility(role);
-  }
-const handleConfirm = () => {
-    onSelect(selectedResponsibility);
-  }
   return (
     <div style={{
       minHeight: "100vh", background: "#050b14",
       display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
       fontFamily: "'Courier New', monospace",
       position: "fixed", overflow: "hidden",
-      height: "100vh",
-      width: "100vw",
-      top: 0, left: 0,
+      height: "100vh", width: "100vw", top: 0, left: 0,
       backgroundImage: "radial-gradient(ellipse at 50% 0%, rgba(0,60,120,0.3) 0%, transparent 70%)"
     }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap');
         @keyframes scanline { 0%{top:-8%} 100%{top:108%} }
-        @keyframes flicker { 0%,100%{opacity:1} 95%{opacity:0.97} 96%{opacity:0.92} }
-        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
         @keyframes alertPulse { from{opacity:1} to{opacity:0.5} }
         .role-card { transition: all 0.2s; cursor:pointer; }
         .role-card:hover { transform:translateY(-2px); }
-        .pilot-btn { transition:all 0.15s; cursor:pointer; }
-        .pilot-btn:hover { filter:brightness(1.15); }
       `}</style>
-
-      {/* Scanline effect */}
       <div style={{ position: "fixed", inset: 0, pointerEvents: "none", overflow: "hidden", zIndex: 100 }}>
         <div style={{ position: "absolute", width: "100%", height: "8%", background: "linear-gradient(transparent,rgba(0,180,255,0.03),transparent)", animation: "scanline 5s linear infinite" }} />
       </div>
-
-      {/* Logo / Header */}
       <div style={{ textAlign: "center", marginBottom: 48 }}>
         <div style={{ fontSize: 11, letterSpacing: 8, color: "#2060a0", marginBottom: 8, fontFamily: "'Share Tech Mono', monospace" }}>AERIS SYSTEMS · AERS v4.2</div>
-        <div style={{ fontSize: 32, fontWeight: 700, color: "#d0e8ff", letterSpacing: 4, fontFamily: "'Rajdhani', sans-serif", textTransform: "uppercase" }}>
-          Aircraft Emergency Response
-        </div>
-        <div style={{ fontSize: 22, fontWeight: 500, color: "#4090d0", letterSpacing: 6, fontFamily: "'Rajdhani', sans-serif" }}>
-          Intelligent System
-        </div>
+        <div style={{ fontSize: 32, fontWeight: 700, color: "#d0e8ff", letterSpacing: 4, fontFamily: "'Rajdhani', sans-serif", textTransform: "uppercase" }}>Aircraft Emergency Response</div>
+        <div style={{ fontSize: 22, fontWeight: 500, color: "#4090d0", letterSpacing: 6, fontFamily: "'Rajdhani', sans-serif" }}>Intelligent System</div>
         <div style={{ width: 180, height: 1, background: "linear-gradient(90deg,transparent,#2060a0,transparent)", margin: "16px auto" }} />
         <div style={{ fontSize: 11, color: "#b7c1d4", letterSpacing: 3, fontFamily: "'Share Tech Mono', monospace" }}>PLEASE SELECT YOUR ROLE</div>
       </div>
-
-      {/* Role Cards */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginBottom: 32, width: 620 }}>
         {[
-          { key: "pf", label: "PILOT FLYING", abbr: "PF", desc: "Controls aircraft · Primary flight duties", color: "#0060cc", glow: "rgba(0,96,204,0.3)", icon: "✈" },
-          { key: "pm", label: "PILOT MONITORING", abbr: "PM", desc: "Monitors systems · Receives alerts", color: "#cc6000", glow: "rgba(204,96,0,0.3)", icon: "◉" }
+          { key: "pf", label: "PILOT FLYING",    abbr: "PF", desc: "Controls aircraft · Primary flight duties", color: "#0060cc", glow: "rgba(0,96,204,0.3)",   icon: "✈" },
+          { key: "pm", label: "PILOT MONITORING", abbr: "PM", desc: "Monitors systems · Receives alerts",       color: "#cc6000", glow: "rgba(204,96,0,0.3)",  icon: "◉" }
         ].map(role => (
           <div key={role.key} className="role-card" style={{
-            background: "#0a1628", border: `1px solid  ${selectedResponsibility === role.key ? "#" + role.color.slice(1) : "#1a2a3a"}`,
-            borderRadius: 12, padding: 20, boxShadow: selectedResponsibility === role.key ? `0 0 24px ${role.glow}` : ""
-          }} onClick={() => handleRoleSelect(role.key)}>
+            background: "#0a1628",
+            border: `1px solid ${selectedResponsibility === role.key ? role.color : "#1a2a3a"}`,
+            borderRadius: 12, padding: 20,
+            boxShadow: selectedResponsibility === role.key ? `0 0 24px ${role.glow}` : ""
+          }} onClick={() => setSelectedResponsibility(role.key)}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
               <div style={{ fontSize: 20 }}>{role.icon}</div>
               <div>
-                <div style={{ fontSize: 10, color: "#3060a0", letterSpacing: 3, fontFamily: "'Share Tech Mono', monospace" }}>{role.abbr}</div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: "#a0c0e0", letterSpacing: 2, fontFamily: "'Rajdhani', sans-serif" }}>{role.label}</div>
+                <div style={{ fontSize: 10, color: "#3060a0", letterSpacing: 3, fontFamily: "'Share Tech Mono',monospace" }}>{role.abbr}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#a0c0e0", letterSpacing: 2, fontFamily: "'Rajdhani',sans-serif" }}>{role.label}</div>
               </div>
             </div>
-            <div style={{ fontSize: 10, color: "#3a5575", marginBottom: 14, fontFamily: "'Share Tech Mono', monospace" }}>{role.desc}</div>
+            <div style={{ fontSize: 10, color: "#3a5575", marginBottom: 14, fontFamily: "'Share Tech Mono',monospace" }}>{role.desc}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {
-                roleResponsibilities[role.key].map((resp, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <div style={{ width: 6, height: 6, borderRadius: "50%", background: role.color }} />
-                    <div style={{ fontSize: 9, color: "#6080a0", fontFamily: "'Share Tech Mono', monospace" }}>{resp}</div>
-                  </div>
-                ))
-              }
-
+              {roleResponsibilities[role.key].map((resp, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: role.color, flexShrink: 0 }} />
+                  <div style={{ fontSize: 9, color: "#6080a0", fontFamily: "'Share Tech Mono',monospace" }}>{resp}</div>
+                </div>
+              ))}
             </div>
           </div>
         ))}
       </div>
-
-      {/* Confirm */}
-      <button onClick={handleConfirm} disabled={!selectedResponsibility} style={{
+      <button onClick={() => onSelect(selectedResponsibility)} disabled={!selectedResponsibility} style={{
         background: selectedResponsibility ? "linear-gradient(135deg,#0050aa,#0080cc)" : "#0d1a28",
         border: `1px solid ${selectedResponsibility ? "#0060bb" : "#1a2a3a"}`,
         borderRadius: 8, padding: "12px 48px", color: selectedResponsibility ? "#e0f0ff" : "#2a4060",
-        fontFamily: "'Rajdhani', sans-serif", fontSize: 14, fontWeight: 700, letterSpacing: 4, cursor: selectedResponsibility ? "pointer" : "not-allowed",
-        transition: "all 0.2s", textTransform: "uppercase"
+        fontFamily: "'Rajdhani',sans-serif", fontSize: 14, fontWeight: 700, letterSpacing: 4,
+        cursor: selectedResponsibility ? "pointer" : "not-allowed", transition: "all 0.2s", textTransform: "uppercase"
       }}>Initialize Flight Deck</button>
-
-{/*      Flying Mantra */}
-      <div style={{ position: "absolute", bottom: 16, fontSize: 18,  color: "#cad8e6", letterSpacing: 3, fontFamily: "'Rajdhani', sans-serif" }}>{flyingMantra}</div>
+      <div style={{ position: "absolute", bottom: 16, fontSize: 18, color: "#cad8e6", letterSpacing: 3, fontFamily: "'Rajdhani',sans-serif" }}>
+        AVIATE · NAVIGATE · COMMUNICATE
+      </div>
     </div>
   );
 }
 
 // ─── Main Flight Deck ─────────────────────────────────────────────────────────
 function FlightDeck({ selectedResponsibility, onReset }) {
-  const fd = useFlightData();
+  const { data: fd, connected } = useJSBSimData();
   const alerts = getAlerts(fd);
   const [activeView, setActiveView] = useState("3d");
   const [modelData, setModelData] = useState(null);
-  const [modelName, setModelName] = useState(null);
-  const handleModelLoad = (geo, name) => { setModelData(geo); setModelName(name); };
 
-  const FMT = (v, dec = 0) => v.toFixed(dec);
-  const col = (v, warn, crit) => v > crit ? "#ff3333" : v > warn ? "#ffaa00" : "#40e0a0";
+  useEffect(() => {
+    loadAircraftModel().then(setModelData).catch(() => {
+      // null → AircraftViewer uses its own fallback geometry
+    });
+  }, []);
 
-  const DataRow = ({ label, value, unit, warn, crit }) => (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "3px 0", borderBottom: "1px solid #0d1a25" }}>
-      <span style={{ color: "#3a5575", fontSize: 10, fontFamily: "'Share Tech Mono',monospace", letterSpacing: 1 }}>{label}</span>
-      <span style={{ fontFamily: "'Share Tech Mono',monospace", fontSize: 12, fontWeight: 600, color: warn ? col(Math.abs(fd[value]), warn, crit) : "#70aadd" }}>
-        {typeof fd[value] === "number" ? FMT(fd[value], value.includes("Angle") ? 1 : 0) : fd[value] ? "ON" : "OFF"}
-        {unit && <span style={{ fontSize: 9, color: "#3a5575", marginLeft: 3 }}>{unit}</span>}
-      </span>
-    </div>
-  );
-useEffect(() => {
-  loadAircraftModel().then((geo) => {
-    setModelData(geo);
-  }).catch(() => {
-    setModelData(buildFallbackGeo());
-  });
-}, []);
   return (
     <div style={{
       minHeight: "100vh", background: "#040a10",
-
-      fontFamily: "'Share Tech Mono', 'Courier New', monospace",
+      fontFamily: "'Share Tech Mono','Courier New',monospace",
       display: "flex", flexDirection: "column",
       backgroundImage: "radial-gradient(ellipse at 50% 0%,rgba(0,40,80,0.4) 0%,transparent 60%)",
       position: "fixed", overflow: "hidden",
@@ -496,10 +678,13 @@ useEffect(() => {
       {/* Top Bar */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 18px", background: "#030811", borderBottom: "1px solid #0d1e30" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#00cc55", boxShadow: "0 0 6px #00cc55" }} />
+          <div style={{ width: 8, height: 8, borderRadius: "50%", background: connected ? "#00cc55" : "#cc3333", boxShadow: connected ? "0 0 6px #00cc55" : "0 0 6px #cc3333" }} />
           <span style={{ fontSize: 10, color: "#2060a0", letterSpacing: 3 }}>AERIS · AERS v4.2</span>
           <span style={{ fontSize: 10, color: "#1a3050" }}>|</span>
           <span style={{ fontSize: 10, color: "#204060", letterSpacing: 2 }}>FLT AXB-441 · {new Date().toUTCString().slice(17, 22)}Z</span>
+          <span style={{ fontSize: 10, color: connected ? "#005522" : "#551111", letterSpacing: 2 }}>
+            {connected ? "● JSBSim CONNECTED" : "○ JSBSim OFFLINE"}
+          </span>
         </div>
         <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
           <div style={{ textAlign: "center" }}>
@@ -523,9 +708,8 @@ useEffect(() => {
       {/* Main layout */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
 
-
-        {/* CENTER — 3D Viewer */}
-        <div style={{ position: "relative", background: "#04090f", display: "flex", flexDirection: "column", width: "100%" }}>
+        {/* CENTER — main content */}
+        <div style={{ position: "relative", background: "#04090f", display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
           {/* Sub-nav */}
           <div style={{ display: "flex", gap: 1, padding: "8px 12px", background: "#030810", borderBottom: "1px solid #0d1e30" }}>
             {["3d", "checklist"].map(v => (
@@ -539,7 +723,7 @@ useEffect(() => {
             <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                 <div style={{ fontSize: 9, color: "#1a3050" }}>JSBSim</div>
-                <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#00cc55", animation: "blink 2s ease-in-out infinite" }} />
+                <div style={{ width: 6, height: 6, borderRadius: "50%", background: connected ? "#00cc55" : "#cc3333", animation: connected ? "blink 2s ease-in-out infinite" : "none" }} />
               </div>
             </div>
           </div>
@@ -548,46 +732,24 @@ useEffect(() => {
           {activeView === "3d" && (
             <div style={{ flex: 1, position: "relative", minHeight: 300 }}>
               <AircraftViewer flightData={fd} showAlerts={true} modelData={modelData} />
-              {/* Monitoring pilot's alert overlay — shown over 3D */}
               <AlertOverlay alerts={alerts} />
-              {/* HUD overlay labels */}
+              {/* HUD overlay — bottom left */}
               <div style={{ position: "absolute", bottom: 12, left: 12, display: "flex", flexDirection: "column", gap: 4, pointerEvents: "none" }}>
-                <div style={{ fontSize: 9, color: "#1a3555", fontFamily: "monospace" }}>BANK {fd.bankAngle.toFixed(1)}° · PITCH {fd.pitchAngle.toFixed(1)}°</div>
-                <div style={{ fontSize: 9, color: "#1a3555", fontFamily: "monospace" }}>ALT {Math.round(fd.altitude)} ft · IAS {Math.round(fd.airspeed)} kts</div>
-              </div>
-              <div style={{ position: "absolute", bottom: 12, right: 12, pointerEvents: "none" }}>
-                <div style={{ fontSize: 8, color: "#1a3050", fontFamily: "monospace", letterSpacing: 2, textAlign: "right" }}>
-                  {alerts.length === 0 ? <span style={{ color: "#0a5030" }}>NO ACTIVE ALERTS</span> : <span style={{ color: "#502010", animation: "blink 1s infinite" }}>MONITORING PILOT ALERT ACTIVE</span>}
+                <div style={{ fontSize: 9, color: "#1a3555", fontFamily: "monospace" }}>
+                  BANK {fd.bankAngle.toFixed(1)}° · PITCH {fd.pitchAngle.toFixed(1)}° · HDG {(((fd.headingAngle % 360) + 360) % 360).toFixed(1)}°
+                </div>
+                <div style={{ fontSize: 9, color: "#1a3555", fontFamily: "monospace" }}>
+                  ALT {Math.round(fd.altitude)} ft · IAS {Math.round(fd.airspeed)} kts · AoA {fd.alphaAngle.toFixed(1)}°
                 </div>
               </div>
-            </div>
-          )}
-
-          {/* Instruments View */}
-          {activeView === "instruments" && (
-            <div style={{ flex: 1, padding: 24, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, overflowY: "auto" }}>
-              {[
-                { label: "AIRSPEED", val: fd.airspeed, unit: "kts", min: 150, max: 600, warn: 485, crit: 495, normal: 480 },
-                { label: "ALTITUDE", val: fd.altitude, unit: "ft", min: 0, max: 45000, warn: 36000, crit: 40000, normal: 35000 },
-                { label: "V/SPEED", val: fd.verticalSpeed, unit: "fpm", min: -2000, max: 2000, warn: 800, crit: 1500, normal: 0 },
-                { label: "ENG 1 N1", val: fd.engineN1L, unit: "%", min: 0, max: 110, warn: 91, crit: 96, normal: 88 },
-                { label: "ENG 2 N1", val: fd.engineN1R, unit: "%", min: 0, max: 110, warn: 91, crit: 96, normal: 88 },
-                { label: "BANK", val: Math.abs(fd.bankAngle), unit: "°", min: 0, max: 90, warn: 15, crit: 30, normal: 0 },
-              ].map(g => {
-                const pct = (g.val - g.min) / (g.max - g.min) * 100;
-                const vc = g.val > g.crit ? "#ff3333" : g.val > g.warn ? "#ffaa00" : "#40e0a0";
-                return (
-                  <div key={g.label} style={{ background: "#07111c", border: "1px solid #0d1e30", borderRadius: 8, padding: 14 }}>
-                    <div style={{ fontSize: 8, color: "#2a4060", letterSpacing: 3, marginBottom: 10 }}>{g.label}</div>
-                    <div style={{ fontSize: 24, fontWeight: 700, color: vc, fontFamily: "'Share Tech Mono',monospace", marginBottom: 8 }}>
-                      {g.val.toFixed(g.label === "ALTITUDE" ? 0 : 1)}<span style={{ fontSize: 10, color: "#2a4060", marginLeft: 4 }}>{g.unit}</span>
-                    </div>
-                    <div style={{ height: 4, background: "#0d1a25", borderRadius: 2 }}>
-                      <div style={{ height: "100%", width: `${Math.min(100, Math.max(0, pct))}%`, background: vc, borderRadius: 2, transition: "width 0.2s" }} />
-                    </div>
-                  </div>
-                );
-              })}
+              {/* Status — bottom right */}
+              <div style={{ position: "absolute", bottom: 12, right: 12, pointerEvents: "none" }}>
+                <div style={{ fontSize: 8, color: "#1a3050", fontFamily: "monospace", letterSpacing: 2, textAlign: "right" }}>
+                  {alerts.length === 0
+                    ? <span style={{ color: "#0a5030" }}>NO ACTIVE ALERTS</span>
+                    : <span style={{ color: "#502010", animation: "blink 1s infinite" }}>MONITORING PILOT ALERT ACTIVE</span>}
+                </div>
+              </div>
             </div>
           )}
 
@@ -596,10 +758,11 @@ useEffect(() => {
             <div style={{ flex: 1, padding: 20, overflowY: "auto" }}>
               <div style={{ fontSize: 10, color: "#2060a0", letterSpacing: 3, marginBottom: 16 }}>EMERGENCY REFERENCE · QRH</div>
               {[
-                { title: "ENGINE FAILURE IN FLIGHT", steps: ["Thrust lever — IDLE", "Dead engine — identify", "Engine Master switch — OFF", "Squawk 7700", "Declare emergency", "Nearest suitable airport — divert"] },
-                { title: "STALL RECOVERY", steps: ["Autopilot — DISCONNECT", "Pitch — NOSE DOWN", "Bank — WINGS LEVEL", "Thrust — INCREASE", "Airspeed — MONITOR min Vstall+20"] },
-                { title: "GPWS BANK ANGLE", steps: ["Roll wings level immediately", "Autopilot — check/disconnect if not responding", "Heading — hold", "EGPWS alert — acknowledge", "Report to ATC"] },
-                { title: "HYDRAULIC SYSTEM FAILURE", steps: ["HYD amber light — check", "Verify system A or B", "Electric pump — select ON", "Alternate braking — available", "Gear extension — alternate"] },
+                { title: "ENGINE FAILURE IN FLIGHT",   steps: ["Thrust lever — IDLE", "Dead engine — identify", "Engine Master switch — OFF", "Squawk 7700", "Declare emergency", "Nearest suitable airport — divert"] },
+                { title: "STALL RECOVERY",              steps: ["Autopilot — DISCONNECT", "Pitch — NOSE DOWN", "Bank — WINGS LEVEL", "Thrust — INCREASE", "Airspeed — MONITOR min Vstall+20"] },
+                { title: "UNUSUAL ATTITUDE RECOVERY",   steps: ["TRUST YOUR INSTRUMENTS — ignore body sensations", "Identify attitude on ADI", "If nose-high: reduce pitch, add power, wings level", "If nose-low: wings level FIRST, then pull to horizon", "Return to level flight smoothly"] },
+                { title: "GPWS BANK ANGLE",             steps: ["Roll wings level immediately", "Autopilot — check/disconnect if not responding", "Heading — hold", "EGPWS alert — acknowledge", "Report to ATC"] },
+                { title: "SPATIAL DISORIENTATION",      steps: ["STOP — do not follow body sensations", "TRUST THE INSTRUMENTS", "Make small, deliberate control inputs", "If unsure: straight and level — wings level, pitch neutral", "Request ATC assistance if needed"] },
               ].map(c => (
                 <div key={c.title} style={{ background: "#06101a", border: "1px solid #0d1e30", borderRadius: 8, padding: 14, marginBottom: 10 }}>
                   <div style={{ fontSize: 10, color: "#60aadd", letterSpacing: 2, marginBottom: 10, fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>{c.title}</div>
@@ -615,7 +778,8 @@ useEffect(() => {
           )}
         </div>
 
-
+        {/* RIGHT — Attitude Reference Panel (always visible) */}
+        <AttitudeReferencePanel fd={fd} connected={connected} />
       </div>
     </div>
   );
