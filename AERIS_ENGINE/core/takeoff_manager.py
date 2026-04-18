@@ -27,7 +27,8 @@ from enum import Enum, auto
 from dataclasses import dataclass, field
 
 from data.ingestion.aircraft_performance import AircraftPerf
-from data.ingestion.dual_adc import DualADC, FailureType
+from data.ingestion.sensor_layer import SensorLayer, FailureType
+from data.ingestion.flight_data_adapter import FlightDataAdapter
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -61,8 +62,8 @@ class TakeoffManager:
 
     # Pitch P-controller gains  — identical across aircraft because
     # the error is in degrees and the output is normalised (-1…1).
-    _KP_PITCH = 0.04
-    _KD_PITCH = 0.06   # damps pitch oscillation
+    _KP_PITCH = 0.02
+    _KD_PITCH = 0.02   # damps pitch oscillation
 
     # Speed P-controller  (maps kts error → target pitch offset in deg)
     _KP_SPEED = 0.25
@@ -82,8 +83,12 @@ class TakeoffManager:
         self.vr  = perf.vr_kts
         self.v2  = perf.v2_kts
 
-        # Dual ADC layer
-        self.dual_adc = DualADC()
+        # Time at which speed first reached VR (for debounce)
+        self._vr_first_seen: float = 0.0
+
+        # Sensor layer + adapter
+        self.sensor_layer = SensorLayer()
+        self.adapter      = FlightDataAdapter(self.sensor_layer)
 
         # Event log (speed, altitude, time at each milestone)
         self._log: list[dict] = []
@@ -98,7 +103,7 @@ class TakeoffManager:
         except ValueError:
             print(f"[TakeoffManager] Unknown failure type: {failure_type_str}")
             return
-        self.dual_adc.inject_failure(
+        self.sensor_layer.inject_failure(
             side=side, failure_type=ft, severity=severity,
             sim_time=sim_time, current_ias=current_ias,
             current_tas=current_tas, current_alt=current_alt,
@@ -106,7 +111,7 @@ class TakeoffManager:
         )
 
     def clear_failure(self, side: str):
-        self.dual_adc.clear_failure(side)
+        self.sensor_layer.clear_failure(side)
 
     # ── Main coroutine ────────────────────────────────────────────────────────
     async def run(self) -> dict:
@@ -179,18 +184,16 @@ class TakeoffManager:
             # ── Flap schedule ─────────────────────────────────────────
             self._manage_flaps(ias_kts)
 
-            # ── Dual ADC ──────────────────────────────────────────────
-            state["adc"] = self.dual_adc.process(state, sim_time=t)
+            # ── Sensor layer + adapter ────────────────────────────────
+            flight_data = self.adapter.get_data(state, sim_time=t)
+            flight_data["phase"]  = self.phase.name
+            flight_data["v1_kts"] = self.v1
+            flight_data["vr_kts"] = self.vr
+            flight_data["v2_kts"] = self.v2
 
             # ── Broadcast ─────────────────────────────────────────────
             if self.ws:
-                state["_takeoff"] = {
-                    "phase":   self.phase.name,
-                    "v1_kts":  self.v1,
-                    "vr_kts":  self.vr,
-                    "v2_kts":  self.v2,
-                }
-                await self.ws.broadcast(state)
+                await self.ws.broadcast(flight_data)
 
             # ── Console (once/sec) ────────────────────────────────────
             sim_step = round(t * 60)
@@ -226,20 +229,24 @@ class TakeoffManager:
             try: fdm[prop] = val
             except Exception: pass
 
-        # Hold on ground with gear down and takeoff flaps
+        # Hold on ground with gear down and takeoff flaps.
+        # Slight nose-down elevator keeps the nosewheel pressed onto the runway
+        # during the idle-run settling phase so the gear contact model stabilises.
         _s("gear/gear-cmd-norm",    1.0)
         _s("fcs/flap-cmd-norm",     p.flap_to_norm)
         _s("fcs/throttle-cmd-norm", 0.0)
-        _s("fcs/elevator-cmd-norm", 0.0)
+        _s("fcs/elevator-cmd-norm", -0.08)   # nose-down to plant gear
         _s("fcs/aileron-cmd-norm",  0.0)
         _s("fcs/rudder-cmd-norm",   0.0)
 
-        # Let the sim settle for 60 frames on the ground at idle
-        for _ in range(60):
+        # Settle for 5 seconds at idle so gear contact dynamics fully damp out
+        for _ in range(300):
             fdm.run()
 
-        # Apply TOGA thrust
-        _s("fcs/throttle-cmd-norm", 1.0)
+        # Ramp throttle to TOGA over 1 second to avoid torque shock
+        for step in range(1, 61):
+            _s("fcs/throttle-cmd-norm", step / 60.0)
+            fdm.run()
 
         self._phase_start_time = 0.0
         self.phase = Phase.GROUND_ROLL
@@ -253,8 +260,13 @@ class TakeoffManager:
             if gs_kts >= self.v1 and not self._logged("V1"):
                 self._log_event("V1", t, gs_kts, agl_ft)
             if gs_kts >= self.vr:
-                self._transition(Phase.ROTATION, t)
-                self._log_event("VR_REACHED", t, gs_kts, agl_ft)
+                if self._vr_first_seen == 0.0:
+                    self._vr_first_seen = t
+                elif t - self._vr_first_seen >= 0.3:   # sustained for 0.3 s
+                    self._transition(Phase.ROTATION, t)
+                    self._log_event("VR_REACHED", t, gs_kts, agl_ft)
+            else:
+                self._vr_first_seen = 0.0   # reset if speed dips below VR
 
         elif self.phase == Phase.ROTATION:
             if not wow and vs_fpm > 50:
@@ -305,7 +317,10 @@ class TakeoffManager:
         elevator = 0.0
 
         if self.phase == Phase.GROUND_ROLL:
-            elevator = 0.0   # keep nose wheel on ground
+            # Progressively release nose-down pressure as speed approaches VR.
+            # Full nose-down (-0.08) at low speed → neutral (0) at VR.
+            vr_frac  = _clamp(ias_kts / max(self.vr, 1.0), 0.0, 1.0)
+            elevator = -0.08 * (1.0 - vr_frac)
 
         elif self.phase == Phase.ROTATION:
             # Drive pitch_rate toward rotation_rate_dps

@@ -49,16 +49,39 @@ function extractGeometry(scene) {
   return { verts: new Float32Array(verts), norms: new Float32Array(norms), cols: new Float32Array(cols), count: verts.length / 3 };
 }
 
-// ─── Real JSBSim WebSocket Hook ───────────────────────────────────────────────
+// ─── AERIS WebSocket Hook ─────────────────────────────────────────────────────
 const _DEFAULT_STATE = {
+  // Primary display (derived from most reliable channel)
   bankAngle: 0, pitchAngle: 0, headingAngle: 0,
+  airspeed: 0, altitude: 0, verticalSpeed: 0, groundspeed: 0,
+  // Dual-channel ADC
+  iasCaptain: 0, iasFo: 0,
+  altCaptain: 0, altFo: 0,
+  vsCaptain: 0,  vsFo: 0,
+  // Dual-channel AHRS
+  pitchCaptain: 0, pitchFo: 0,
+  rollCaptain: 0,  rollFo: 0,
+  headingCaptain: 0, headingFo: 0,
+  // Validity & failure
+  adcCaptainValid: true, adcFoValid: true,
+  ahrsCapValid: true,    ahrsFoValid: true,
+  adcCaptainFailure: "none", adcFoFailure: "none",
+  // Cross-check & disagree
+  anyDisagree: false, altDisagree: false,
+  pitchDisagree: false, rollDisagree: false,
+  iasDelta: 0, altDelta: 0,
+  // Suspect flags & guidance
+  captainSuspect: false, foSuspect: false, bothSuspect: false,
+  recommendedAction: "",
+  // Flight phase & V-speeds
+  phase: "GROUND_ROLL", v1: 0, vr: 0, v2: 0,
+  // Alert helpers
+  stall: false, overspeed: false, gpws: false, tcas: false, stallNorm: 0,
+  // Unused legacy fields kept for component compatibility
   alphaAngle: 0, betaAngle: 0,
   rollRate: 0, pitchRate: 0, yawRate: 0,
-  altitude: 0, verticalSpeed: 0, airspeed: 0, groundspeed: 0,
   engineN1L: 0, engineN1R: 0, engineN2L: 0, engineN2R: 0,
-  engineRPM0: 0,
-  fuelLeft: 0, fuelRight: 0, stallNorm: 0,
-  stall: false, overspeed: false, gpws: false, tcas: false,
+  engineRPM0: 0, fuelLeft: 0, fuelRight: 0,
   hydraulicA: 3000, hydraulicB: 3000, apu: false, gearDown: false,
   flapAngle: 0, spoilers: false, autoThrottle: false, autopilot: false, pitotHeat: false,
 };
@@ -82,44 +105,86 @@ function useJSBSimData() {
       ws.onmessage = ({ data: raw }) => {
         try {
           const s = JSON.parse(raw);
-          const d = s.derived || {};
-          const j = s.jsbsim  || {};
-          const e = s.engines  || [];
-          const t = s.tanks    || [];
 
-          const ias  = j["velocities/vc-kts"]      ?? 0;
-          const sn   = j["aero/stall-hyst-norm"]   ?? 0;
-          const bank = d.roll_deg ?? 0;
-          const pitch = d.pitch_deg ?? 0;
+          // Dual-channel values from AERIS FlightDataAdapter
+          const pitchC = s.pitch_captain  ?? 0;
+          const rollC  = s.roll_captain   ?? 0;
+          const hdgC   = s.heading_captain ?? 0;
+          const iasC   = s.ias_captain    ?? 0;
+          const altC   = s.alt_captain    ?? 0;
+          const vsC    = s.vs_captain     ?? 0;
+
+          const pitchFO = s.pitch_fo  ?? 0;
+          const rollFO  = s.roll_fo   ?? 0;
+          const hdgFO   = s.heading_fo ?? 0;
+          const iasFO   = s.ias_fo    ?? 0;
+          const altFO   = s.alt_fo    ?? 0;
+          const vsFO    = s.vs_fo     ?? 0;
+
+          const capSuspect = s.captain_suspect ?? false;
+          const foSuspect  = s.fo_suspect      ?? false;
+
+          // Primary display: use FO channel if captain is suspect (and FO is not)
+          const usefo = capSuspect && !foSuspect;
+          const bank  = usefo ? rollFO  : rollC;
+          const pitch = usefo ? pitchFO : pitchC;
+          const hdg   = usefo ? hdgFO   : hdgC;
+          const ias   = usefo ? iasFO   : iasC;
+          const alt   = usefo ? altFO   : altC;
+          const vs    = usefo ? vsFO    : vsC;
 
           setData({
             bankAngle:    bank,
             pitchAngle:   pitch,
-            headingAngle: d.heading_deg     ?? 0,
-            alphaAngle:   d.alpha_deg       ?? 0,
-            betaAngle:    d.beta_deg        ?? 0,
-            rollRate:     d.roll_rate_dps   ?? 0,
-            pitchRate:    d.pitch_rate_dps  ?? 0,
-            yawRate:      d.yaw_rate_dps    ?? 0,
-            altitude:     j["position/h-sl-ft"]     ?? 0,
-            verticalSpeed: d.vertical_speed_fpm     ?? 0,
+            headingAngle: hdg,
             airspeed:     ias,
-            groundspeed:  d.groundspeed_kts ?? 0,
-            engineN1L:    e[0]?.n1_pct      ?? 0,
-            engineN1R:    e[1]?.n1_pct      ?? 0,
-            engineN2L:    e[0]?.n2_pct      ?? 0,
-            engineN2R:    e[1]?.n2_pct      ?? 0,
-            engineRPM0:   e[0]?.rpm         ?? 0,
-            fuelLeft:     t[0]?.contents_lbs ?? 0,
-            fuelRight:    t[1]?.contents_lbs ?? 0,
-            stallNorm:    sn,
-            stall:        sn > 0.85,
-            overspeed:    ias > 160,             // c172p Vne ≈ 163 kts
-            gpws:         Math.abs(bank) > 45,   // extreme bank
-            tcas: false,
+            altitude:     alt,
+            verticalSpeed: vs,
+            groundspeed:  s.groundspeed_kts ?? 0,
+
+            iasCaptain: iasC,   iasFo: iasFO,
+            altCaptain: altC,   altFo: altFO,
+            vsCaptain:  vsC,    vsFo:  vsFO,
+            pitchCaptain: pitchC, pitchFo: pitchFO,
+            rollCaptain:  rollC,  rollFo:  rollFO,
+            headingCaptain: hdgC, headingFo: hdgFO,
+
+            adcCaptainValid:   s.adc_captain_valid   ?? true,
+            adcFoValid:        s.adc_fo_valid         ?? true,
+            ahrsCapValid:      s.ahrs_captain_valid   ?? true,
+            ahrsFoValid:       s.ahrs_fo_valid        ?? true,
+            adcCaptainFailure: s.adc_captain_failure  ?? "none",
+            adcFoFailure:      s.adc_fo_failure       ?? "none",
+
+            anyDisagree:   s.any_disagree   ?? false,
+            altDisagree:   s.alt_disagree   ?? false,
+            pitchDisagree: s.pitch_disagree ?? false,
+            rollDisagree:  s.roll_disagree  ?? false,
+            iasDelta:      s.ias_delta_kts  ?? 0,
+            altDelta:      s.alt_delta_ft   ?? 0,
+
+            captainSuspect:    capSuspect,
+            foSuspect:         foSuspect,
+            bothSuspect:       s.both_suspect      ?? false,
+            recommendedAction: s.recommended_action ?? "",
+
+            phase: s.phase  ?? "GROUND_ROLL",
+            v1:    s.v1_kts ?? 0,
+            vr:    s.vr_kts ?? 0,
+            v2:    s.v2_kts ?? 0,
+
+            stall:     false,
+            overspeed: ias > 250,
+            gpws:      Math.abs(bank) > 45,
+            tcas:      false,
+            stallNorm: 0,
+
+            alphaAngle: 0, betaAngle: 0,
+            rollRate: 0, pitchRate: 0, yawRate: 0,
+            engineN1L: 0, engineN1R: 0, engineN2L: 0, engineN2R: 0,
+            engineRPM0: 0, fuelLeft: 0, fuelRight: 0,
             hydraulicA: 3000, hydraulicB: 3000, apu: false,
-            gearDown:     (j["gear/gear-pos-norm[0]"] ?? 0) > 0.5,
-            flapAngle:    j["fcs/flap-pos-deg"] ?? 0,
+            gearDown: false, flapAngle: 0,
             spoilers: false, autoThrottle: false, autopilot: false, pitotHeat: false,
           });
         } catch (_) {}
@@ -136,22 +201,38 @@ function useJSBSimData() {
 // ─── Alert definitions ────────────────────────────────────────────────────────
 function getAlerts(fd) {
   const alerts = [];
-  if (fd.stall)
-    alerts.push({ id: "STALL",  severity: "critical", msg: "STALL WARNING",   detail: "Increase speed immediately" });
-  if (fd.overspeed)
-    alerts.push({ id: "OVSPD",  severity: "critical", msg: "OVERSPEED",        detail: "Reduce thrust — Vne exceeded" });
+
+  // AERIS sensor disagree / suspect alerts (highest priority)
+  if (fd.bothSuspect)
+    alerts.push({ id: "UNRELIABLE_SPD", severity: "critical", msg: "UNRELIABLE AIRSPEED",
+      detail: fd.recommendedAction || "Both ADC channels suspect — cross-check all instruments" });
+  if (fd.captainSuspect && !fd.bothSuspect)
+    alerts.push({ id: "CAPT_ADC", severity: "warning", msg: "CAPT ADC SUSPECT",
+      detail: `${fd.adcCaptainFailure || "Failure detected"} — cross-check F/O instruments` });
+  if (fd.foSuspect && !fd.bothSuspect)
+    alerts.push({ id: "FO_ADC", severity: "warning", msg: "F/O ADC SUSPECT",
+      detail: `${fd.adcFoFailure || "Failure detected"} — cross-check CAPT instruments` });
+  if (fd.pitchDisagree)
+    alerts.push({ id: "PITCH_DISAGREE", severity: "critical", msg: "PITCH DISAGREE",
+      detail: `AHRS mismatch Δ${Math.abs(fd.pitchCaptain - fd.pitchFo).toFixed(1)}° — cross-check attitude` });
+  if (fd.rollDisagree)
+    alerts.push({ id: "ROLL_DISAGREE", severity: "critical", msg: "ROLL DISAGREE",
+      detail: `AHRS mismatch Δ${Math.abs(fd.rollCaptain - fd.rollFo).toFixed(1)}° — cross-check attitude` });
+  if (fd.altDisagree)
+    alerts.push({ id: "ALT_DISAGREE", severity: "warning", msg: "ALT DISAGREE",
+      detail: `ADC alt delta ${Math.abs(fd.altDelta).toFixed(0)} ft — verify altimeter settings` });
+
+  // Standard attitude alerts
   if (fd.gpws)
-    alerts.push({ id: "BANK",   severity: "critical", msg: "BANK ANGLE",       detail: "Excessive bank — reduce roll immediately" });
+    alerts.push({ id: "BANK",   severity: "critical", msg: "BANK ANGLE",   detail: "Excessive bank — reduce roll immediately" });
   if (fd.pitchAngle > 15)
-    alerts.push({ id: "NOSEUP", severity: "warning",  msg: "NOSE HIGH",        detail: `Pitch ${fd.pitchAngle.toFixed(1)}° — reduce back pressure` });
+    alerts.push({ id: "NOSEUP", severity: "warning",  msg: "NOSE HIGH",    detail: `Pitch ${fd.pitchAngle.toFixed(1)}° — reduce back pressure` });
   if (fd.pitchAngle < -10)
-    alerts.push({ id: "NOSDN",  severity: "warning",  msg: "NOSE LOW",         detail: `Pitch ${fd.pitchAngle.toFixed(1)}° — increase back pressure` });
-  if (fd.alphaAngle > 12 && !fd.stall)
-    alerts.push({ id: "HIAOA",  severity: "warning",  msg: "HIGH ALPHA",       detail: `AoA ${fd.alphaAngle.toFixed(1)}° — approaching stall` });
-  if (fd.airspeed > 0 && fd.airspeed < 52 && !fd.stall)
-    alerts.push({ id: "LOWSPD", severity: "warning",  msg: "LOW AIRSPEED",     detail: `IAS ${fd.airspeed.toFixed(0)} kts — near stall speed` });
+    alerts.push({ id: "NOSDN",  severity: "warning",  msg: "NOSE LOW",     detail: `Pitch ${fd.pitchAngle.toFixed(1)}° — increase back pressure` });
+  if (fd.airspeed > 0 && fd.airspeed < 52)
+    alerts.push({ id: "LOWSPD", severity: "warning",  msg: "LOW AIRSPEED", detail: `IAS ${fd.airspeed.toFixed(0)} kts — near stall speed` });
   if (fd.tcas)
-    alerts.push({ id: "TCAS",   severity: "advisory", msg: "TCAS RA",          detail: "Traffic advisory — climb" });
+    alerts.push({ id: "TCAS",   severity: "advisory", msg: "TCAS RA",      detail: "Traffic advisory — climb" });
   return alerts;
 }
 
@@ -234,14 +315,10 @@ function ArtificialHorizon({ bankAngle, pitchAngle }) {
 function AttitudeReferencePanel({ fd, connected }) {
   const bank  = fd.bankAngle;
   const pitch = fd.pitchAngle;
-  const alpha = fd.alphaAngle;
-  const beta  = fd.betaAngle;
 
   const bankColor  = Math.abs(bank) > 45 ? "#ff3333" : Math.abs(bank) > 25 ? "#ffaa00" : "#40e0a0";
   const pitchColor = (pitch > 15 || pitch < -10) ? "#ff3333" : Math.abs(pitch) > 8 ? "#ffaa00" : "#40e0a0";
-  const alphaColor = alpha > 12 ? "#ff3333" : alpha > 8 ? "#ffaa00" : "#40e0a0";
-  const betaColor  = Math.abs(beta) > 10 ? "#ffaa00" : "#40e0a0";
-  const unusualAttitude = Math.abs(bank) > 30 || pitch > 15 || pitch < -10 || alpha > 12;
+  const unusualAttitude = Math.abs(bank) > 30 || pitch > 15 || pitch < -10;
 
   const Lbl = ({ children }) => (
     <div style={{ fontSize: 7, color: "#2a4060", letterSpacing: 2, fontFamily: "'Share Tech Mono',monospace", marginBottom: 1 }}>
@@ -252,7 +329,6 @@ function AttitudeReferencePanel({ fd, connected }) {
   const BigNum = ({ val, decimals = 1, color, unit, fontSize = 20 }) => (
     <div style={{ display: "flex", alignItems: "baseline", gap: 3, lineHeight: 1 }}>
       <span style={{ fontFamily: "'Share Tech Mono',monospace", fontSize, fontWeight: 700, color, letterSpacing: 1 }}>
-        {val >= 0 && val !== Math.abs(val) ? "" : ""}
         {(val >= 0 ? "+" : "") + val.toFixed(decimals)}
       </span>
       <span style={{ color: "#2a4060", fontSize: 10 }}>{unit}</span>
@@ -261,9 +337,32 @@ function AttitudeReferencePanel({ fd, connected }) {
 
   const hdg = ((fd.headingAngle % 360) + 360) % 360;
 
+  // Channel health colours
+  const capColor = fd.captainSuspect ? "#ff4444" : fd.adcCaptainValid && fd.ahrsCapValid ? "#40e0a0" : "#ffaa00";
+  const foColor  = fd.foSuspect      ? "#ff4444" : fd.adcFoValid     && fd.ahrsFoValid   ? "#40e0a0" : "#ffaa00";
+
+  const DualRow = ({ lbl, capVal, foVal, unit, disagree, decimals = 1 }) => (
+    <div style={{ marginBottom: 4 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 1 }}>
+        <span style={{ fontSize: 7, color: disagree ? "#ff9900" : "#1a3050", fontFamily: "monospace", letterSpacing: 2 }}>
+          {lbl}{disagree ? " !" : ""}
+        </span>
+        <span style={{ fontSize: 7, color: "#1a2a3a", fontFamily: "monospace" }}>{unit}</span>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between" }}>
+        <span style={{ fontSize: 11, color: capColor, fontFamily: "monospace", fontWeight: 600 }}>
+          C {capVal.toFixed(decimals)}
+        </span>
+        <span style={{ fontSize: 11, color: foColor, fontFamily: "monospace", fontWeight: 600 }}>
+          F {foVal.toFixed(decimals)}
+        </span>
+      </div>
+    </div>
+  );
+
   return (
     <div style={{
-      width: 195, flexShrink: 0,
+      width: 210, flexShrink: 0,
       background: "#030a14",
       borderLeft: "1px solid #0d1e30",
       display: "flex", flexDirection: "column",
@@ -275,13 +374,32 @@ function AttitudeReferencePanel({ fd, connected }) {
       {/* Header */}
       <div style={{ textAlign: "center", borderBottom: "1px solid #0d1a28", paddingBottom: 7 }}>
         <div style={{ fontSize: 9, color: "#3a6090", letterSpacing: 4, fontFamily: "'Share Tech Mono',monospace" }}>
-          ATTITUDE REF
+          AERIS · ATTITUDE REF
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, marginTop: 4 }}>
           <div style={{ width: 5, height: 5, borderRadius: "50%", background: connected ? "#00cc55" : "#cc3333", boxShadow: connected ? "0 0 5px #00cc55" : "none" }} />
           <span style={{ fontSize: 7, color: connected ? "#00aa44" : "#aa2222", letterSpacing: 2, fontFamily: "monospace" }}>
-            {connected ? "JSBSim LIVE" : "NO SIGNAL"}
+            {connected ? "ENGINE LIVE" : "NO SIGNAL"}
           </span>
+        </div>
+      </div>
+
+      {/* Flight phase & V-speeds */}
+      <div style={{ borderBottom: "1px solid #0d1a28", paddingBottom: 7 }}>
+        <div style={{ fontSize: 8, color: "#3a6090", letterSpacing: 3, fontFamily: "monospace", marginBottom: 4 }}>
+          {fd.phase.replace("_", " ")}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          {[["V1", fd.v1], ["VR", fd.vr], ["V2", fd.v2]].map(([lbl, val]) => (
+            <div key={lbl} style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 7, color: "#2a4060", fontFamily: "monospace" }}>{lbl}</div>
+              <div style={{ fontSize: 11, color: "#5090c0", fontFamily: "monospace", fontWeight: 600 }}>{val.toFixed(0)}</div>
+            </div>
+          ))}
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 7, color: "#2a4060", fontFamily: "monospace" }}>GS</div>
+            <div style={{ fontSize: 11, color: "#5090c0", fontFamily: "monospace", fontWeight: 600 }}>{fd.groundspeed.toFixed(0)}</div>
+          </div>
         </div>
       </div>
 
@@ -291,26 +409,19 @@ function AttitudeReferencePanel({ fd, connected }) {
       </div>
 
       {/* Primary attitude readouts */}
-      <div style={{ borderTop: "1px solid #0d1a28", paddingTop: 7, display: "flex", flexDirection: "column", gap: 7 }}>
-
-        {/* Bank */}
+      <div style={{ borderTop: "1px solid #0d1a28", paddingTop: 7, display: "flex", flexDirection: "column", gap: 6 }}>
         <div>
           <Lbl>BANK (ROLL)</Lbl>
           <BigNum val={bank} color={bankColor} unit="°" />
-          {/* Bank bar */}
           <div style={{ height: 3, background: "#091520", borderRadius: 2, marginTop: 3, position: "relative", overflow: "hidden" }}>
             <div style={{ position: "absolute", left: "50%", width: `${Math.min(50, Math.abs(bank) / 90 * 100)}%`, transform: bank >= 0 ? "none" : "translateX(-100%)", height: "100%", background: bankColor, borderRadius: 2, transition: "width 0.1s" }} />
             <div style={{ position: "absolute", left: "50%", top: 0, width: 1, height: "100%", background: "#1a3050" }} />
           </div>
         </div>
-
-        {/* Pitch */}
         <div>
           <Lbl>PITCH</Lbl>
           <BigNum val={pitch} color={pitchColor} unit="°" />
         </div>
-
-        {/* Heading */}
         <div>
           <Lbl>HEADING (TRUE)</Lbl>
           <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
@@ -320,67 +431,59 @@ function AttitudeReferencePanel({ fd, connected }) {
             <span style={{ color: "#2a4060", fontSize: 10 }}>°</span>
           </div>
         </div>
-
-        {/* Angle of Attack */}
-        <div>
-          <Lbl>ANGLE OF ATTACK</Lbl>
-          <BigNum val={alpha} color={alphaColor} unit="°" fontSize={18} />
-          {fd.stallNorm > 0.5 && (
-            <div style={{ fontSize: 7, color: fd.stallNorm > 0.85 ? "#ff3333" : "#ffaa00", letterSpacing: 1, marginTop: 2, fontFamily: "monospace" }}>
-              STALL {(fd.stallNorm * 100).toFixed(0)}%
-            </div>
-          )}
-        </div>
-
-        {/* Sideslip */}
-        <div>
-          <Lbl>SIDESLIP (β)</Lbl>
-          <BigNum val={beta} color={betaColor} unit="°" fontSize={16} />
-        </div>
       </div>
 
-      {/* Secondary data */}
-      <div style={{ borderTop: "1px solid #0d1a28", paddingTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
-        {[
-          { lbl: "IAS", val: fd.airspeed.toFixed(0),  unit: "kts" },
-          { lbl: "ALT", val: Math.round(fd.altitude).toString(),   unit: "ft" },
-          { lbl: "V/S", val: (fd.verticalSpeed >= 0 ? "+" : "") + Math.round(fd.verticalSpeed), unit: "fpm" },
-        ].map(({ lbl, val, unit }) => (
-          <div key={lbl} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-            <span style={{ fontSize: 7, color: "#2a4060", fontFamily: "monospace", letterSpacing: 2 }}>{lbl}</span>
-            <span style={{ fontSize: 12, color: "#5090c0", fontFamily: "monospace", fontWeight: 600 }}>
-              {val}<span style={{ fontSize: 7, color: "#1a3050", marginLeft: 2 }}>{unit}</span>
+      {/* Dual-channel ADC */}
+      <div style={{ borderTop: "1px solid #0d1a28", paddingTop: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+          <Lbl>DUAL ADC</Lbl>
+          <div style={{ display: "flex", gap: 6 }}>
+            <span style={{ fontSize: 7, color: capColor, fontFamily: "monospace" }}>
+              CAPT {fd.adcCaptainFailure !== "none" ? `[${fd.adcCaptainFailure}]` : "OK"}
+            </span>
+            <span style={{ fontSize: 7, color: foColor, fontFamily: "monospace" }}>
+              F/O {fd.adcFoFailure !== "none" ? `[${fd.adcFoFailure}]` : "OK"}
             </span>
           </div>
-        ))}
+        </div>
+        <DualRow lbl="IAS" capVal={fd.iasCaptain} foVal={fd.iasFo} unit="kts" disagree={fd.anyDisagree} decimals={0} />
+        <DualRow lbl="ALT" capVal={fd.altCaptain} foVal={fd.altFo} unit="ft"  disagree={fd.altDisagree} decimals={0} />
+        <DualRow lbl="V/S" capVal={fd.vsCaptain}  foVal={fd.vsFo}  unit="fpm" disagree={false} decimals={0} />
       </div>
 
-      {/* Rate indicators */}
-      <div style={{ borderTop: "1px solid #0d1a28", paddingTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
-        <Lbl>RATES (°/s)</Lbl>
-        {[
-          { lbl: "ROLL", val: fd.rollRate },
-          { lbl: "PTCH", val: fd.pitchRate },
-        ].map(({ lbl, val }) => {
-          const absVal = Math.abs(val);
-          const rc = absVal > 15 ? "#ffaa00" : "#2a5070";
-          return (
-            <div key={lbl} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-              <span style={{ fontSize: 7, color: "#1a3050", fontFamily: "monospace", letterSpacing: 2 }}>{lbl}</span>
-              <span style={{ fontSize: 11, color: rc, fontFamily: "monospace" }}>
-                {(val >= 0 ? "+" : "") + val.toFixed(1)}
-              </span>
-            </div>
-          );
-        })}
+      {/* Dual-channel AHRS */}
+      <div style={{ borderTop: "1px solid #0d1a28", paddingTop: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+          <Lbl>DUAL AHRS</Lbl>
+          <div style={{ display: "flex", gap: 6 }}>
+            <span style={{ fontSize: 7, color: fd.ahrsCapValid ? "#40e0a0" : "#ff4444", fontFamily: "monospace" }}>
+              CAPT {fd.ahrsCapValid ? "OK" : "FAIL"}
+            </span>
+            <span style={{ fontSize: 7, color: fd.ahrsFoValid ? "#40e0a0" : "#ff4444", fontFamily: "monospace" }}>
+              F/O {fd.ahrsFoValid ? "OK" : "FAIL"}
+            </span>
+          </div>
+        </div>
+        <DualRow lbl="PITCH" capVal={fd.pitchCaptain} foVal={fd.pitchFo} unit="°"   disagree={fd.pitchDisagree} />
+        <DualRow lbl="ROLL"  capVal={fd.rollCaptain}  foVal={fd.rollFo}  unit="°"   disagree={fd.rollDisagree} />
+        <DualRow lbl="HDG"   capVal={fd.headingCaptain} foVal={fd.headingFo} unit="°" disagree={false} decimals={0} />
       </div>
 
-      {/* Spatial Disorientation Warning */}
+      {/* Recommended action */}
+      {fd.recommendedAction && (
+        <div style={{ borderTop: "1px solid #0d1a28", paddingTop: 6 }}>
+          <Lbl>RECOMMENDED ACTION</Lbl>
+          <div style={{ fontSize: 8, color: "#ffaa00", fontFamily: "monospace", lineHeight: 1.5, marginTop: 2 }}>
+            {fd.recommendedAction}
+          </div>
+        </div>
+      )}
+
+      {/* Spatial Disorientation / status footer */}
       <div style={{ marginTop: "auto", borderTop: "1px solid #0d1a28", paddingTop: 7, textAlign: "center" }}>
         {unusualAttitude ? (
           <div style={{
-            background: "rgba(255,30,30,0.10)",
-            border: "1px solid rgba(255,30,30,0.50)",
+            background: "rgba(255,30,30,0.10)", border: "1px solid rgba(255,30,30,0.50)",
             borderRadius: 5, padding: "7px 6px",
             animation: "alertPulse 0.6s ease-in-out infinite alternate",
           }}>
@@ -683,7 +786,7 @@ function FlightDeck({ selectedResponsibility, onReset }) {
           <span style={{ fontSize: 10, color: "#1a3050" }}>|</span>
           <span style={{ fontSize: 10, color: "#204060", letterSpacing: 2 }}>FLT AXB-441 · {new Date().toUTCString().slice(17, 22)}Z</span>
           <span style={{ fontSize: 10, color: connected ? "#005522" : "#551111", letterSpacing: 2 }}>
-            {connected ? "● JSBSim CONNECTED" : "○ JSBSim OFFLINE"}
+            {connected ? "● AERIS ENGINE CONNECTED" : "○ AERIS ENGINE OFFLINE"}
           </span>
         </div>
         <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
@@ -722,7 +825,7 @@ function FlightDeck({ selectedResponsibility, onReset }) {
             ))}
             <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                <div style={{ fontSize: 9, color: "#1a3050" }}>JSBSim</div>
+                <div style={{ fontSize: 9, color: "#1a3050" }}>AERIS</div>
                 <div style={{ width: 6, height: 6, borderRadius: "50%", background: connected ? "#00cc55" : "#cc3333", animation: connected ? "blink 2s ease-in-out infinite" : "none" }} />
               </div>
             </div>
@@ -735,16 +838,26 @@ function FlightDeck({ selectedResponsibility, onReset }) {
               <AlertOverlay alerts={alerts} />
               {/* HUD overlay — bottom left */}
               <div style={{ position: "absolute", bottom: 12, left: 12, display: "flex", flexDirection: "column", gap: 4, pointerEvents: "none" }}>
+                <div style={{ fontSize: 9, color: "#2a5070", fontFamily: "monospace", letterSpacing: 1 }}>
+                  {fd.phase.replace("_", " ")} · V1 {fd.v1.toFixed(0)} VR {fd.vr.toFixed(0)} V2 {fd.v2.toFixed(0)} kts
+                </div>
                 <div style={{ fontSize: 9, color: "#1a3555", fontFamily: "monospace" }}>
                   BANK {fd.bankAngle.toFixed(1)}° · PITCH {fd.pitchAngle.toFixed(1)}° · HDG {(((fd.headingAngle % 360) + 360) % 360).toFixed(1)}°
                 </div>
                 <div style={{ fontSize: 9, color: "#1a3555", fontFamily: "monospace" }}>
-                  ALT {Math.round(fd.altitude)} ft · IAS {Math.round(fd.airspeed)} kts · AoA {fd.alphaAngle.toFixed(1)}°
+                  ALT {Math.round(fd.altitude)} ft · IAS {Math.round(fd.airspeed)} kts · GS {Math.round(fd.groundspeed)} kts
                 </div>
+                {fd.anyDisagree && (
+                  <div style={{ fontSize: 8, color: "#ff9900", fontFamily: "monospace", letterSpacing: 1 }}>
+                    ⚠ SENSOR DISAGREE — CROSS-CHECK INSTRUMENTS
+                  </div>
+                )}
               </div>
               {/* Status — bottom right */}
               <div style={{ position: "absolute", bottom: 12, right: 12, pointerEvents: "none" }}>
                 <div style={{ fontSize: 8, color: "#1a3050", fontFamily: "monospace", letterSpacing: 2, textAlign: "right" }}>
+                  {fd.captainSuspect && <div style={{ color: "#ff4444" }}>CAPT SUSPECT</div>}
+                  {fd.foSuspect      && <div style={{ color: "#ff4444" }}>F/O SUSPECT</div>}
                   {alerts.length === 0
                     ? <span style={{ color: "#0a5030" }}>NO ACTIVE ALERTS</span>
                     : <span style={{ color: "#502010", animation: "blink 1s infinite" }}>MONITORING PILOT ALERT ACTIVE</span>}

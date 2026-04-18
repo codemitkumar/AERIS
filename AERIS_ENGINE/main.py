@@ -56,7 +56,7 @@ async def async_main(model: str):
         fuel_per_tank_lbs=None,          # use half-capacity default
         default_controls={
             "throttle": 0.0,             # TakeoffManager sets TOGA at brake release
-            "rudder":   0.07 if model == "c172p" else 0.0,
+            "rudder":   0.0,   # TakeoffManager controls rudder via elevator law; no static bias
             "gear":     1.0,             # gear down at start
         },
     )
@@ -97,7 +97,7 @@ async def async_main(model: str):
 
 def main():
     model = sys.argv[1] if len(sys.argv) > 1 else "c172p"
-    launch_flightgear()
+    # launch_flightgear()
     asyncio.run(async_main(model))
 
 
