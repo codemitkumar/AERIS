@@ -14,6 +14,8 @@ import jsbsim
 import math
 import os
 
+_JSB_ROOT = os.path.dirname(jsbsim.__file__)
+
 # ── Directory constants ───────────────────────────────────────────────────────
 _HERE    = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(os.path.dirname(_HERE))   # AERIS_ENGINE root
@@ -23,6 +25,10 @@ _FPS_TO_KTS = 0.592484
 _R_TO_C     = lambda r: (r - 491.67) * 5.0 / 9.0    # Rankine → Celsius
 _PSF_TO_HPA = 0.478803                                # lb/ft²  → hPa
 _RHO_SL     = 0.002377                                # slug/ft³ standard sea-level
+
+# Sub-steps per control frame — runs JSBSim at 4× the control rate so gear
+# contact spring forces are numerically stable (gear dynamics need small dt).
+_SUBSTEPS = 4
 
 # ── Namespaces to capture from the JSBSim property catalog ───────────────────
 _CAPTURE_PREFIXES = (
@@ -70,7 +76,7 @@ _DEFAULT_IC = {
 GROUND_START_IC = {
     "ic/lat-gc-deg":   28.5665,  # VIDP (Indira Gandhi Intl)
     "ic/long-gc-deg":  77.1031,
-    "ic/h-sl-ft":      0.0,      # sea-level runway; JSBSim places on ground
+    "ic/h-sl-ft":      5.0,      # CG starts 5 ft up; gear settles onto runway during init
     "ic/vt-kts":       0.0,      # standing start
     "ic/u-fps":        0.0,
     "ic/v-fps":        0.0,
@@ -107,13 +113,17 @@ class JSBSimClient:
         self.model = model
 
         # ── JSBSim setup ──────────────────────────────────────────────
-        self.fdm = jsbsim.FGFDMExec(None)
+        self.fdm = jsbsim.FGFDMExec(_JSB_ROOT)
         self.fdm.set_debug_level(0)
-        self.fdm.load_model(model)
+        if not self.fdm.load_model(model):
+            raise RuntimeError(
+                f"JSBSim could not load model '{model}'. "
+                f"Available aircraft: {os.listdir(os.path.join(_JSB_ROOT, 'aircraft'))}"
+            )
 
         xml_path = fg_xml or os.path.join(ROOT_DIR, "flightgear.xml")
         self.fdm.set_output_directive(xml_path)
-        self.fdm.set_dt(1.0 / 60.0)
+        self.fdm.set_dt(1.0 / (60.0 * _SUBSTEPS))
 
         # ── Initial conditions ────────────────────────────────────────
         merged_ic = {**_DEFAULT_IC, **(ic or {})}
@@ -274,7 +284,13 @@ class JSBSimClient:
         _s("fcs/mixture-cmd-norm",    self._mixture)
         _s("fcs/speedbrake-cmd-norm", self._speedbrake)
         _s("gear/gear-cmd-norm",      self._gear)
-        self.fdm.run()
+        for _ in range(_SUBSTEPS):
+            self.fdm.run()
+
+    def run_substeps(self, n_control_frames: int):
+        """Advance n control frames (each = _SUBSTEPS × dt) without updating controls."""
+        for _ in range(n_control_frames * _SUBSTEPS):
+            self.fdm.run()
 
     def set_controls(self, throttle=None, elevator=None, aileron=None,
                      rudder=None, flaps=None, mixture=None,

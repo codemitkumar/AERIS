@@ -70,16 +70,16 @@ async def async_main(model: str):
         cmd = msg.get("cmd", "")
         if cmd == "inject_failure":
             jsb_s = manager.client.get_state().get("jsbsim", {})
-            manager.inject_failure(
-                side              = msg.get("side", "captain"),
-                failure_type_str  = msg.get("type", "none"),
-                severity          = float(msg.get("severity", 1.0)),
-                sim_time          = float(msg.get("sim_time", 0.0)),
-                current_ias       = jsb_s.get("velocities/vc-kts") or 0.0,
-                current_tas       = jsb_s.get("velocities/vtrue-kts") or 0.0,
-                current_alt       = jsb_s.get("position/h-sl-ft") or 0.0,
-                current_mach      = jsb_s.get("velocities/mach") or 0.0,
-            )
+            # manager.inject_failure(
+            #     side              = msg.get("side", "captain"),
+            #     failure_type_str  = msg.get("type", "none"),
+            #     severity          = float(msg.get("severity", 1.0)),
+            #     sim_time          = float(msg.get("sim_time", 0.0)),
+            #     current_ias       = jsb_s.get("velocities/vc-kts") or 0.0,
+            #     current_tas       = jsb_s.get("velocities/vtrue-kts") or 0.0,
+            #     current_alt       = jsb_s.get("position/h-sl-ft") or 0.0,
+            #     current_mach      = jsb_s.get("velocities/mach") or 0.0,
+            # )
         elif cmd == "clear_failure":
             manager.clear_failure(msg.get("side", "captain"))
         elif cmd == "status":

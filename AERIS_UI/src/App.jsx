@@ -173,7 +173,7 @@ function useJSBSimData() {
             vr:    s.vr_kts ?? 0,
             v2:    s.v2_kts ?? 0,
 
-            stall:     false,
+            stall:     ias > 0 && ias < 45,
             overspeed: ias > 250,
             gpws:      Math.abs(bank) > 45,
             tcas:      false,
