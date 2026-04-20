@@ -17,24 +17,9 @@ V-speed physics
 
 import math
 import os
-import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-_HERE         = os.path.dirname(os.path.abspath(__file__))
-_INGESTION    = _HERE                               # data/ingestion/
-_ENGINE_ROOT  = os.path.join(
-    os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-    # Walk up from site-packages/jsbsim/… won't work — use jsbsim module path
-)
-
-import jsbsim as _jsbsim
-_JSB_ROOT     = os.path.dirname(_jsbsim.__file__)  # JSBSim package root
-_JSB_ENGINE   = os.path.join(_JSB_ROOT, "engine")
-
-# ── Unit helpers ──────────────────────────────────────────────────────────────
-_KG_TO_LB   = 2.20462
+# ── Constants ─────────────────────────────────────────────────────────────────
 _RHO_SL     = 0.002377          # slug/ft³ standard sea-level density
 _FPS_TO_KTS = 0.592484
 
@@ -76,93 +61,6 @@ class AircraftPerf:
     v1_kts:  float = 0.0
     vr_kts:  float = 0.0
     v2_kts:  float = 0.0
-
-
-# ── Parsed-value helpers ──────────────────────────────────────────────────────
-def _unit_to_lbs(value: float, unit: str) -> float:
-    unit = unit.strip().upper()
-    if unit in ("LBS", "LB"):      return value
-    if unit in ("KG", "KGS"):      return value * _KG_TO_LB
-    return value
-
-
-def _unit_to_ft2(value: float, unit: str) -> float:
-    unit = unit.strip().upper()
-    if unit in ("FT2", "FT^2"):    return value
-    if unit in ("M2", "M^2"):      return value * 10.7639
-    return value
-
-
-def _xml_float(elem, xpath: str, default=0.0) -> tuple:
-    """Return (float_value, unit_str) for a simple element with optional unit attr."""
-    node = elem.find(xpath)
-    if node is None or node.text is None:
-        return default, ""
-    return float(node.text.strip()), node.get("unit", "")
-
-
-def _get_milthrust(engine_file: str) -> float:
-    """Parse the engine XML file and return milthrust in lbs. Returns 0 on failure."""
-    # Search JSBSim engine directory
-    path = os.path.join(_JSB_ENGINE, engine_file + ".xml")
-    if not os.path.exists(path):
-        path = os.path.join(_JSB_ENGINE, engine_file)
-    if not os.path.exists(path):
-        return 0.0
-    try:
-        root = ET.parse(path).getroot()
-        node = root.find("milthrust")
-        return float(node.text.strip()) if node is not None else 0.0
-    except Exception:
-        return 0.0
-
-
-def _parse_fdm_xml(xml_path: str) -> dict:
-    """
-    Parse a JSBSim FDM XML and return a dict with:
-      empty_wt_lbs, wing_area_ft2, engine_files (list), tow_lbs
-    """
-    tree = ET.parse(xml_path)
-    root = tree.getroot()
-
-    # Structural weight
-    ew_val, ew_unit = _xml_float(root, "mass_balance/emptywt")
-    empty_wt = _unit_to_lbs(ew_val, ew_unit)
-
-    # Pointmasses (payload, crew, cargo, engines)
-    pointmass_total = 0.0
-    for pm in root.findall(".//pointmass"):
-        w_val, w_unit = _xml_float(pm, "weight")
-        pointmass_total += _unit_to_lbs(w_val, w_unit)
-
-    # Fuel in tanks
-    fuel_lbs = 0.0
-    for tank in root.findall(".//tank"):
-        c_val, c_unit = _xml_float(tank, "contents")
-        fuel_lbs += _unit_to_lbs(c_val, c_unit)
-
-    tow = empty_wt + pointmass_total + fuel_lbs
-
-    # Wing area
-    wa_val, wa_unit = _xml_float(root, "metrics/wingarea")
-    wing_area = _unit_to_ft2(wa_val, wa_unit)
-
-    # Engines
-    engine_files = []
-    for eng in root.findall(".//engine"):
-        ef = eng.get("file", "")
-        if ef:
-            engine_files.append(ef)
-
-    return {
-        "empty_wt_lbs":   empty_wt,
-        "pointmass_lbs":  pointmass_total,
-        "fuel_lbs":       fuel_lbs,
-        "tow_lbs":        tow,
-        "wing_area_ft2":  wing_area,
-        "engine_files":   engine_files,
-        "engine_count":   len(engine_files),
-    }
 
 
 # ── V-speed calculation ───────────────────────────────────────────────────────
