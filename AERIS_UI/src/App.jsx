@@ -699,7 +699,7 @@ function RoleSelector({ onSelect }) {
         <div style={{ position: "absolute", width: "100%", height: "8%", background: "linear-gradient(transparent,rgba(0,180,255,0.03),transparent)", animation: "scanline 5s linear infinite" }} />
       </div>
       <div style={{ textAlign: "center", marginBottom: 48 }}>
-        <div style={{ fontSize: 11, letterSpacing: 8, color: "#2060a0", marginBottom: 8, fontFamily: "'Share Tech Mono', monospace" }}>AERIS SYSTEMS · AERS v4.2</div>
+        <div style={{ fontSize: 11, letterSpacing: 8, color: "#2060a0", marginBottom: 8, fontFamily: "'Share Tech Mono', monospace" }}>AERIS SYSTEMS · AERIS v4.2</div>
         <div style={{ fontSize: 32, fontWeight: 700, color: "#d0e8ff", letterSpacing: 4, fontFamily: "'Rajdhani', sans-serif", textTransform: "uppercase" }}>Aircraft Emergency Response</div>
         <div style={{ fontSize: 22, fontWeight: 500, color: "#4090d0", letterSpacing: 6, fontFamily: "'Rajdhani', sans-serif" }}>Intelligent System</div>
         <div style={{ width: 180, height: 1, background: "linear-gradient(90deg,transparent,#2060a0,transparent)", margin: "16px auto" }} />
