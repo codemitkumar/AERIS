@@ -19,6 +19,8 @@ import sys
 from data.ingestion.FlightGenerator      import FlightGenerator, Phase
 from data.ingestion.aircraft_performance import get_performance, list_models
 from communication.websocket_server      import WebSocketServer
+from core.data_bus                       import DataBus
+from modules.registry                    import register_all
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 AIRPORT_CSV = os.path.join(BASE_DIR, "airports.csv")
@@ -81,17 +83,20 @@ def _cross_check(state: dict) -> dict:
     }
 
 
-async def flight_loop(gen: FlightGenerator, ws: WebSocketServer, log_fp):
+async def flight_loop(gen: FlightGenerator, ws: WebSocketServer, log_fp, bus: DataBus):
     while gen.phase != Phase.COMPLETE:
         state  = gen.step()
         cross  = _cross_check(state)
         record = {**state, **cross}
 
-        log_fp.write(json.dumps(record) + "\n")
-        log_fp.flush()
+        if gen.should_log():
+            log_fp.write(json.dumps(record) + "\n")
+            log_fp.flush()
 
         if ws:
             await ws.broadcast(record)
+
+        await bus.publish(record)
 
         await asyncio.sleep(gen.dt)
 
@@ -113,6 +118,8 @@ async def async_main(model: str):
 
     gen = FlightGenerator(perf, AIRPORT_CSV, dt=1/30)
     ws  = WebSocketServer(host="0.0.0.0", port=8765)
+    bus = DataBus()
+    register_all(bus)
 
     async def _handle_command(msg: dict):
         cmd = msg.get("cmd", "")
@@ -129,7 +136,7 @@ async def async_main(model: str):
     with open(log_path, "w", encoding="utf-8") as log_fp:
         await asyncio.gather(
             ws.start(),
-            flight_loop(gen, ws, log_fp),
+            flight_loop(gen, ws, log_fp, bus),
         )
 
 

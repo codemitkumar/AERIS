@@ -121,7 +121,7 @@ class FlightGenerator:
         self.speed = 0
         self.pitch = 0
         self.roll = 0
-        self.heading = 0
+        self.heading = 0  # overwritten after departure_heading is set below
         self.vs = 0
 
         self.initial_fuel = 100.0
@@ -159,9 +159,22 @@ class FlightGenerator:
             self.dest["lat"], self.dest["lon"]
         )
 
+        # Runway heading: random direction, independent of destination
+        self.departure_heading = random.choice(range(0, 360, 10)) * 1.0
+        self._initial_turn_done = False
+        self.heading = self.departure_heading
+
         self.cruise_alt = min(perf.cruise_alt_ft, 30000)
         if perf.model == "c172p":
             self.cruise_alt = random.randint(5000, 10000)
+
+        # Logging cadence: time-based interval + event triggers
+        self._log_interval = 60.0 if perf.model == "c172p" else 180.0
+        self._last_log_time = -999.0        # force first entry immediately
+        self._prev_log_phase = None
+        self._prev_log_throttle = -1.0      # sentinel: differs from any real throttle
+        self._prev_log_heading = self.heading
+        self._prev_log_vs_sign = 0
 
         self.meta = {
             "model": perf.model,
@@ -181,6 +194,37 @@ class FlightGenerator:
     def _noise(self, v, n):
         return v + random.uniform(-n, n)
 
+    def should_log(self) -> bool:
+        """Return True when this tick should be persisted to the log file.
+
+        Triggers:
+          - phase transition
+          - throttle change > 5 %
+          - heading change > 15 °
+          - vertical-speed sign change (climb ↔ level ↔ descent)
+          - elapsed time since last log ≥ interval
+        """
+        throttle = getattr(self, "throttle", 0.0)
+        vs_sign = 1 if self.vs > 50 else (-1 if self.vs < -50 else 0)
+        heading_delta = abs((self.heading - self._prev_log_heading + 180) % 360 - 180)
+
+        triggered = (
+            self.phase != self._prev_log_phase
+            or abs(throttle - self._prev_log_throttle) > 0.05
+            or heading_delta > 15
+            or vs_sign != self._prev_log_vs_sign
+            or (self.time - self._last_log_time) >= self._log_interval
+        )
+
+        if triggered:
+            self._last_log_time = self.time
+            self._prev_log_phase = self.phase
+            self._prev_log_throttle = throttle
+            self._prev_log_heading = self.heading
+            self._prev_log_vs_sign = vs_sign
+
+        return triggered
+
     def _update_phase(self):
         if self.phase == Phase.GROUND_ROLL and self.speed >= self.perf.vr_kts:
             self.phase = Phase.ROTATION
@@ -194,10 +238,30 @@ class FlightGenerator:
             self.phase = Phase.COMPLETE
 
     def _turn_dynamics(self):
+        # Ground roll and rotation: hold runway heading, wings level
+        if self.phase in [Phase.GROUND_ROLL, Phase.ROTATION]:
+            self.roll = 0
+            return
+
+        # Stay on departure heading until safely climbing (1500 ft AGL)
+        if self.phase == Phase.CLIMB and self.alt < 1500:
+            self.roll = 0
+            return
+
         error = (self.target_heading - self.heading + 540) % 360 - 180
-        turn_rate = clamp(error * 0.05, -3, 3)
-        self.heading += turn_rate * self.dt
-        self.roll = clamp(turn_rate * 5, -20, 20)
+
+        # Big banked turn toward destination after initial climb
+        if self.phase == Phase.CLIMB and not self._initial_turn_done:
+            turn_rate = clamp(error * 0.15, -3.5, 3.5)
+            self.roll = clamp(turn_rate * 8, -30, 30)
+            if abs(error) < 2:
+                self._initial_turn_done = True
+        else:
+            # Minor heading corrections in cruise/descent
+            turn_rate = clamp(error * 0.04, -1.5, 1.5)
+            self.roll = clamp(turn_rate * 7, -15, 15)
+
+        self.heading = (self.heading + turn_rate * self.dt) % 360
 
     def _fuel_burn(self):
         phase_mult = {
