@@ -61,6 +61,13 @@ class WebSocketServer:
             if isinstance(result, Exception):
                 self.clients.discard(client)
 
+    async def broadcast_alert(self, alert: dict):
+        """Send an alert message to all connected clients.
+
+        Expected keys: topic ("alert" | "alert_clear"), id, severity, msg, detail.
+        """
+        await self.broadcast(alert)
+
     async def start(self):
         print(f"[WS] Server listening on ws://{self.host}:{self.port}")
         async with websockets.serve(self._handler, self.host, self.port):

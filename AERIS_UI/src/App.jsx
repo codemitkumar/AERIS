@@ -89,6 +89,7 @@ const _DEFAULT_STATE = {
 function useJSBSimData() {
   const [data, setData] = useState(_DEFAULT_STATE);
   const [connected, setConnected] = useState(false);
+  const [alerts, setAlerts] = useState([]);
   const wsRef = useRef(null);
   const timerRef = useRef(null);
 
@@ -99,12 +100,26 @@ function useJSBSimData() {
       wsRef.current = ws;
 
       ws.onopen = () => { setConnected(true); clearTimeout(timerRef.current); };
-      ws.onclose = () => { setConnected(false); timerRef.current = setTimeout(connect, 2000); };
+      ws.onclose = () => {
+        setConnected(false);
+        setAlerts([]);
+        timerRef.current = setTimeout(connect, 2000);
+      };
       ws.onerror = () => ws.close();
 
       ws.onmessage = ({ data: raw }) => {
         try {
           const s = JSON.parse(raw);
+
+          // Alert messages from backend modules
+          if (s.topic === "alert") {
+            setAlerts(prev => [...prev.filter(a => a.id !== s.id), { id: s.id, severity: s.severity, msg: s.msg, detail: s.detail }]);
+            return;
+          }
+          if (s.topic === "alert_clear") {
+            setAlerts(prev => prev.filter(a => a.id !== s.id));
+            return;
+          }
 
           // Dual-channel values from AERIS FlightDataAdapter
           const pitchC = s.pitch_captain  ?? 0;
@@ -195,46 +210,9 @@ function useJSBSimData() {
     return () => { clearTimeout(timerRef.current); wsRef.current?.close(); };
   }, []);
 
-  return { data, connected };
+  return { data, connected, alerts };
 }
 
-// ─── Alert definitions ────────────────────────────────────────────────────────
-function getAlerts(fd) {
-  const alerts = [];
-
-  // AERIS sensor disagree / suspect alerts (highest priority)
-  if (fd.bothSuspect)
-    alerts.push({ id: "UNRELIABLE_SPD", severity: "critical", msg: "UNRELIABLE AIRSPEED",
-      detail: fd.recommendedAction || "Both ADC channels suspect — cross-check all instruments" });
-  if (fd.captainSuspect && !fd.bothSuspect)
-    alerts.push({ id: "CAPT_ADC", severity: "warning", msg: "CAPT ADC SUSPECT",
-      detail: `${fd.adcCaptainFailure || "Failure detected"} — cross-check F/O instruments` });
-  if (fd.foSuspect && !fd.bothSuspect)
-    alerts.push({ id: "FO_ADC", severity: "warning", msg: "F/O ADC SUSPECT",
-      detail: `${fd.adcFoFailure || "Failure detected"} — cross-check CAPT instruments` });
-  if (fd.pitchDisagree)
-    alerts.push({ id: "PITCH_DISAGREE", severity: "critical", msg: "PITCH DISAGREE",
-      detail: `AHRS mismatch Δ${Math.abs(fd.pitchCaptain - fd.pitchFo).toFixed(1)}° — cross-check attitude` });
-  if (fd.rollDisagree)
-    alerts.push({ id: "ROLL_DISAGREE", severity: "critical", msg: "ROLL DISAGREE",
-      detail: `AHRS mismatch Δ${Math.abs(fd.rollCaptain - fd.rollFo).toFixed(1)}° — cross-check attitude` });
-  if (fd.altDisagree)
-    alerts.push({ id: "ALT_DISAGREE", severity: "warning", msg: "ALT DISAGREE",
-      detail: `ADC alt delta ${Math.abs(fd.altDelta).toFixed(0)} ft — verify altimeter settings` });
-
-  // Standard attitude alerts
-  if (fd.gpws)
-    alerts.push({ id: "BANK",   severity: "critical", msg: "BANK ANGLE",   detail: "Excessive bank — reduce roll immediately" });
-  if (fd.pitchAngle > 15)
-    alerts.push({ id: "NOSEUP", severity: "warning",  msg: "NOSE HIGH",    detail: `Pitch ${fd.pitchAngle.toFixed(1)}° — reduce back pressure` });
-  if (fd.pitchAngle < -10)
-    alerts.push({ id: "NOSDN",  severity: "warning",  msg: "NOSE LOW",     detail: `Pitch ${fd.pitchAngle.toFixed(1)}° — increase back pressure` });
-  if (fd.airspeed > 0 && fd.airspeed < 52)
-    alerts.push({ id: "LOWSPD", severity: "warning",  msg: "LOW AIRSPEED", detail: `IAS ${fd.airspeed.toFixed(0)} kts — near stall speed` });
-  if (fd.tcas)
-    alerts.push({ id: "TCAS",   severity: "advisory", msg: "TCAS RA",      detail: "Traffic advisory — climb" });
-  return alerts;
-}
 
 // ─── Artificial Horizon (SVG) ─────────────────────────────────────────────────
 function ArtificialHorizon({ bankAngle, pitchAngle }) {
@@ -505,7 +483,7 @@ function AttitudeReferencePanel({ fd, connected }) {
 }
 
 // ─── 3D Aircraft WebGL Renderer ───────────────────────────────────────────────
-function AircraftViewer({ flightData, showAlerts, modelData }) {
+function AircraftViewer({ flightData, showAlerts, modelData, alerts = [] }) {
   const canvasRef  = useRef(null);
   const glRef      = useRef(null);
   const programRef = useRef(null);
@@ -598,7 +576,7 @@ function AircraftViewer({ flightData, showAlerts, modelData }) {
     const prog = programRef.current;
     if (!gl || !prog) return;
     cancelAnimationFrame(animRef.current);
-    const hasCritical = showAlerts && getAlerts(flightData).some(a => a.severity === "critical");
+    const hasCritical = showAlerts && alerts.some(a => a.severity === "critical");
     const render = (now) => {
       const canvas = canvasRef.current;
       const bufs = buffersRef.current;
@@ -629,7 +607,7 @@ function AircraftViewer({ flightData, showAlerts, modelData }) {
     };
     animRef.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animRef.current);
-  }, [flightData, showAlerts]);
+  }, [flightData, showAlerts, alerts]);
 
   return <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block", borderRadius: 8 }} />;
 }
@@ -751,8 +729,7 @@ function RoleSelector({ onSelect }) {
 
 // ─── Main Flight Deck ─────────────────────────────────────────────────────────
 function FlightDeck({ selectedResponsibility, onReset }) {
-  const { data: fd, connected } = useJSBSimData();
-  const alerts = getAlerts(fd);
+  const { data: fd, connected, alerts } = useJSBSimData();
   const [activeView, setActiveView] = useState("3d");
   const [modelData, setModelData] = useState(null);
 
@@ -834,7 +811,7 @@ function FlightDeck({ selectedResponsibility, onReset }) {
           {/* 3D View */}
           {activeView === "3d" && (
             <div style={{ flex: 1, position: "relative", minHeight: 300 }}>
-              <AircraftViewer flightData={fd} showAlerts={true} modelData={modelData} />
+              <AircraftViewer flightData={fd} showAlerts={true} modelData={modelData} alerts={alerts} />
               <AlertOverlay alerts={alerts} />
               {/* HUD overlay — bottom left */}
               <div style={{ position: "absolute", bottom: 12, left: 12, display: "flex", flexDirection: "column", gap: 4, pointerEvents: "none" }}>
