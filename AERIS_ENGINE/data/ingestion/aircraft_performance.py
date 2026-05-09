@@ -57,6 +57,22 @@ class AircraftPerf:
     # Regulatory category
     is_transport:        bool    # True → FAR 25; False → FAR 23
 
+    # Route selection bounds (nautical miles)
+    max_range_nm:  float = 0.0
+    min_route_nm:  float = 0.0
+    max_route_nm:  float = 0.0
+
+    # Fuel system
+    fuel_capacity_lbs: float = 0.0   # max usable fuel load
+
+    # Flap configuration (degrees)
+    flap_to_deg:   float = 0.0       # takeoff setting
+    flap_land_deg: float = 0.0       # full landing setting
+
+    # Engine power references (N1 % for jets, shaft-power % for turboprops/pistons)
+    n1_idle_pct:   float = 22.0      # ground idle
+    n1_toga_pct:   float = 100.0     # max takeoff thrust
+
     # Computed V-speeds (filled by compute_vspeeds)
     v1_kts:  float = 0.0
     vr_kts:  float = 0.0
@@ -117,6 +133,14 @@ _DB: dict[str, AircraftPerf] = {
         engine_count=1,
         thrust_total_lbs=800.0,
         is_transport=False,
+        max_range_nm=640,
+        min_route_nm=50,
+        max_route_nm=350,
+        fuel_capacity_lbs=240.0,   # 40 US gal × 6 lbs/gal
+        flap_to_deg=10.0,
+        flap_land_deg=30.0,
+        n1_idle_pct=22.0,          # piston: low-idle power %
+        n1_toga_pct=100.0,
     ),
 
     "A320": AircraftPerf(
@@ -136,6 +160,14 @@ _DB: dict[str, AircraftPerf] = {
         engine_count=2,
         thrust_total_lbs=40000.0,  # 2 × CFM56_5 @ 20,000 lbs
         is_transport=True,
+        max_range_nm=3300,
+        min_route_nm=300,
+        max_route_nm=2500,
+        fuel_capacity_lbs=42000.0,  # ~19 050 kg
+        flap_to_deg=10.0,
+        flap_land_deg=35.0,
+        n1_idle_pct=22.0,
+        n1_toga_pct=100.0,
     ),
 
     "737": AircraftPerf(
@@ -155,6 +187,14 @@ _DB: dict[str, AircraftPerf] = {
         engine_count=2,
         thrust_total_lbs=40000.0,  # 2 × CFM56 @ 20,000 lbs
         is_transport=True,
+        max_range_nm=2900,
+        min_route_nm=300,
+        max_route_nm=2500,
+        fuel_capacity_lbs=26000.0,  # ~11 800 kg
+        flap_to_deg=10.0,
+        flap_land_deg=40.0,
+        n1_idle_pct=22.0,
+        n1_toga_pct=100.0,
     ),
 
     "A330-223": AircraftPerf(
@@ -174,6 +214,14 @@ _DB: dict[str, AircraftPerf] = {
         engine_count=2,
         thrust_total_lbs=137200.0,  # 2 × PW4168A @ 68,600 lbs
         is_transport=True,
+        max_range_nm=7250,
+        min_route_nm=2500,
+        max_route_nm=6500,
+        fuel_capacity_lbs=139000.0,  # ~63 100 kg
+        flap_to_deg=14.0,
+        flap_land_deg=35.0,
+        n1_idle_pct=22.0,
+        n1_toga_pct=100.0,
     ),
 
     "787-8": AircraftPerf(
@@ -193,6 +241,14 @@ _DB: dict[str, AircraftPerf] = {
         engine_count=2,
         thrust_total_lbs=133000.0,  # 2 × Trent 1000 @ 66,500 lbs
         is_transport=True,
+        max_range_nm=8000,
+        min_route_nm=3000,
+        max_route_nm=7500,
+        fuel_capacity_lbs=150000.0,  # typical long-haul load
+        flap_to_deg=15.0,
+        flap_land_deg=30.0,
+        n1_idle_pct=22.0,
+        n1_toga_pct=100.0,
     ),
 
     "B747": AircraftPerf(
@@ -212,6 +268,14 @@ _DB: dict[str, AircraftPerf] = {
         engine_count=4,
         thrust_total_lbs=232000.0,  # 4 × GE CF6-80C2 @ 58,000 lbs
         is_transport=True,
+        max_range_nm=7260,
+        min_route_nm=2500,
+        max_route_nm=7000,
+        fuel_capacity_lbs=280000.0,  # ~127 000 kg max
+        flap_to_deg=10.0,
+        flap_land_deg=30.0,
+        n1_idle_pct=22.0,
+        n1_toga_pct=100.0,
     ),
 
     "C130": AircraftPerf(
@@ -231,6 +295,14 @@ _DB: dict[str, AircraftPerf] = {
         engine_count=4,
         thrust_total_lbs=68000.0,  # 4 × T56 @ ~17,000 lbs equivalent
         is_transport=True,
+        max_range_nm=2050,
+        min_route_nm=300,
+        max_route_nm=1800,
+        fuel_capacity_lbs=62000.0,
+        flap_to_deg=20.0,
+        flap_land_deg=50.0,
+        n1_idle_pct=30.0,           # turboprop: prop speed at idle
+        n1_toga_pct=100.0,
     ),
 }
 
