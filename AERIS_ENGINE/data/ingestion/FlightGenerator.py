@@ -5,7 +5,34 @@ import math
 import csv
 import time
 import os
+import sys as _sys
+import site as _site
 from enum import Enum, auto
+
+# ── ADRpy (optional) ─────────────────────────────────────────────────────────
+try:
+    from ADRpy import atmospheres as _atm_mod, unitconversions as _uc
+    _ADRPY = True
+except ImportError:
+    _user_sp = _site.getusersitepackages()
+    if isinstance(_user_sp, str):
+        _user_sp = [_user_sp]
+    for _p in _user_sp:
+        if _p not in _sys.path:
+            _sys.path.insert(0, _p)
+    try:
+        from ADRpy import atmospheres as _atm_mod, unitconversions as _uc
+        _ADRPY = True
+    except ImportError:
+        _ADRPY = False
+
+
+def _s(v):
+    """Extract scalar from numpy array."""
+    try:
+        return float(v.item()) if hasattr(v, 'item') else float(v)
+    except Exception:
+        return float(v[0])
 
 
 # ─────────────────────────────────────────────
@@ -177,6 +204,7 @@ class FlightGenerator:
 
         # ── Atmosphere (fixed per simulation, slight variation) ────────
         self.qnh_hpa       = round(random.uniform(990.0, 1033.0), 1)
+        self._atm          = _atm_mod.Atmosphere() if _ADRPY else None
 
         # ── Wind (constant direction/speed, held throughout) ──────────
         self.wind_dir      = round(random.uniform(0, 359))
@@ -508,12 +536,33 @@ class FlightGenerator:
         alt = self.alt
 
         # ── Atmosphere ────────────────────────────────────────────────
-        oat_c    = 15.0 - (alt / 1000.0) * 1.9812     # ISA lapse rate
-        sigma    = max(0.001, (1 - alt * 6.87535e-6) ** 4.2561)  # density ratio
-        sos_kts  = 661.5 * math.sqrt(max(0.01, (oat_c + 273.15) / 288.15))
-        tas_kts  = self.speed / math.sqrt(sigma)
-        mach     = tas_kts / sos_kts if sos_kts > 0 else 0.0
-        tat_c    = oat_c * (1 + 0.2 * mach ** 2)       # total air temperature
+        if _ADRPY:
+            alt_m    = _uc.feet2m(alt)
+            oat_c    = _s(self._atm.airtemp_c(alt_m))
+            oat_k    = _s(self._atm.airtemp_k(alt_m))
+            rho      = _s(self._atm.airdens_kgpm3(alt_m))
+            sigma    = max(0.001, rho / 1.225)
+            p_act_pa = _s(self._atm.airpress_pa(alt_m))
+            sos_kts  = _s(self._atm.vsound_kts(alt_m))
+            eas_mps  = _uc.kts2mps(self.speed)
+            tas_mps  = _s(self._atm.eas2tas(eas_mps, alt_m))
+            tas_kts  = _uc.mps2kts(tas_mps)
+            cas_kts  = _s(self._atm.keas2kcas(self.speed, alt_m)[0])
+            mach     = tas_kts / sos_kts if sos_kts > 0 else 0.0
+            tat_ratio = _s(_atm_mod.tatbysat(mach))
+            tat_c    = oat_k * tat_ratio - 273.15
+        else:
+            oat_c    = 15.0 - (alt / 1000.0) * 1.9812
+            oat_k    = oat_c + 273.15
+            rho      = max(0.001225, 1.225 * (1 - alt * 6.87535e-6) ** 4.2561)
+            sigma    = max(0.001, rho / 1.225)
+            p_act_pa = 101325.0 * (1 - alt * 6.87535e-6) ** 5.2561
+            sos_kts  = 661.5 * math.sqrt(max(0.01, oat_k / 288.15))
+            tas_kts  = self.speed / math.sqrt(sigma)
+            cas_kts  = self.speed
+            mach     = tas_kts / sos_kts if sos_kts > 0 else 0.0
+            tat_c    = oat_k * (1.0 + 0.2 * mach ** 2) - 273.15
+
         pres_alt = alt + (1013.25 - self.qnh_hpa) * 27.0
         dens_alt = alt + (15.0 - oat_c) * 120.0
 
@@ -559,6 +608,26 @@ class FlightGenerator:
         fuel_lbs         = self.fuel / 100.0 * p.fuel_capacity_lbs
         fuel_burned_lbs  = (100.0 - self.fuel) / 100.0 * p.fuel_capacity_lbs
         gross_weight_lbs = p.tow_lbs - fuel_burned_lbs
+
+        # ── ADRpy: thrust available + live stall speed ─────────────────
+        if _ADRPY:
+            if p.engine_type == "piston":
+                thrust_avail_ratio = _s(_atm_mod.pistonpowerfactor(rho))
+            elif p.engine_type == "turboprop":
+                thrust_avail_ratio = _s(_atm_mod.turbopropthrustfactor(sigma, mach))
+            else:
+                thrust_avail_ratio = _s(_atm_mod.turbofanthrustfactor(
+                    oat_c, p_act_pa, mach, ptype='highbpr'))
+            w_n  = _uc.lbf2n(gross_weight_lbs)
+            s_m2 = _uc.feet22m2(p.wing_area_ft2)
+            if rho > 0 and s_m2 > 0 and w_n > 0:
+                vs_tas_mps = math.sqrt(2.0 * w_n / (rho * s_m2 * p.clmax_to))
+                vs_kias = round(_uc.mps2kts(_s(self._atm.tas2eas(vs_tas_mps, alt_m))), 1)
+            else:
+                vs_kias = 0.0
+        else:
+            thrust_avail_ratio = None
+            vs_kias = 0.0
 
         # ── Control surfaces (simplified but directionally realistic) ──
         trim_deg     = self.trim * 10.0
@@ -607,12 +676,13 @@ class FlightGenerator:
 
             # ── Speeds ──────────────────────────────────────────────
             "groundspeed_kts": round(gs, 1),
+            "eas_kts":         round(self.speed, 1),
             "tas_kts":         round(tas_kts, 1),
-            "cas_kts":         round(self.speed, 1),     # CAS ≈ IAS for this model
+            "cas_kts":         round(cas_kts, 1),
             "mach":            round(mach, 3),
 
             # ── Captain ADC ─────────────────────────────────────────
-            "ias_captain":     round(self._noise(self.speed, 1.0), 1),
+            "ias_captain":     round(self._noise(cas_kts, 1.0), 1),
             "alt_captain":     round(self._noise(alt, 5.0)),
             "vs_captain":      round(self._noise(self.vs, 50.0)),
 
@@ -622,7 +692,7 @@ class FlightGenerator:
             "heading_captain": round(self._noise(self.heading, 0.5), 1),
 
             # ── FO ADC ──────────────────────────────────────────────
-            "ias_fo":          round(self._noise(self.speed, 1.0), 1),
+            "ias_fo":          round(self._noise(cas_kts, 1.0), 1),
             "alt_fo":          round(self._noise(alt, 5.0)),
             "vs_fo":           round(self._noise(self.vs, 50.0)),
 
@@ -656,13 +726,14 @@ class FlightGenerator:
             "crosswind_kts":   round(crosswind_kts, 1),
 
             # ── Engines ─────────────────────────────────────────────
-            "throttle_pct":    round(self.throttle * 100, 1),
-            "n1_pct":          n1_pct,
-            "n2_pct":          n2_pct,
-            "egt_c":           egt_c,
-            "fuel_flow_pph":   fuel_flow_pph,        # per engine, lbs/hr
-            "reverse_active":  self.reverse_active,
-            "toga_active":     self.toga,
+            "throttle_pct":       round(self.throttle * 100, 1),
+            "n1_pct":             n1_pct,
+            "n2_pct":             n2_pct,
+            "egt_c":              egt_c,
+            "fuel_flow_pph":      fuel_flow_pph,     # per engine, lbs/hr
+            "reverse_active":     self.reverse_active,
+            "toga_active":        self.toga,
+            "thrust_avail_ratio": round(thrust_avail_ratio, 3) if thrust_avail_ratio is not None else None,
 
             # ── Fuel / weight ────────────────────────────────────────
             "fuel_pct":        round(self.fuel, 2),
@@ -698,6 +769,7 @@ class FlightGenerator:
             "v1_kts":          p.v1_kts,
             "vr_kts":          p.vr_kts,
             "v2_kts":          p.v2_kts,
+            "vs_kias":         vs_kias,
         }
 
         if self.emergency_fn:
