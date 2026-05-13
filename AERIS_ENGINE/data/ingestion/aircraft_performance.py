@@ -17,10 +17,38 @@ V-speed physics
 
 import math
 import os
+import sys as _sys
+import site as _site
 from dataclasses import dataclass
 
+# ── ADRpy (optional — validated ISA + speed conversions) ─────────────────────
+try:
+    from ADRpy import atmospheres as _atm_mod, unitconversions as _uc
+    _ADRPY = True
+except ImportError:
+    _user_sp = _site.getusersitepackages()
+    if isinstance(_user_sp, str):
+        _user_sp = [_user_sp]
+    for _p in _user_sp:
+        if _p not in _sys.path:
+            _sys.path.insert(0, _p)
+    try:
+        from ADRpy import atmospheres as _atm_mod, unitconversions as _uc
+        _ADRPY = True
+    except ImportError:
+        _ADRPY = False
+
+
+def _s(v):
+    """Extract scalar from numpy array."""
+    try:
+        return float(v.item()) if hasattr(v, 'item') else float(v)
+    except Exception:
+        return float(v[0])
+
+
 # ── Constants ─────────────────────────────────────────────────────────────────
-_RHO_SL     = 0.002377          # slug/ft³ standard sea-level density
+_RHO_SL     = 0.002377          # slug/ft³ standard sea-level density (fallback)
 _FPS_TO_KTS = 0.592484
 
 
@@ -73,6 +101,9 @@ class AircraftPerf:
     n1_idle_pct:   float = 22.0      # ground idle
     n1_toga_pct:   float = 100.0     # max takeoff thrust
 
+    # Engine thermodynamic type (used by ADRpy thrust factor)
+    engine_type:   str   = "turbofan_highbpr"   # piston | turboprop | turbofan_highbpr
+
     # Computed V-speeds (filled by compute_vspeeds)
     v1_kts:  float = 0.0
     vr_kts:  float = 0.0
@@ -83,24 +114,27 @@ class AircraftPerf:
 def compute_vspeeds(perf: AircraftPerf, airport_elev_ft: float = 0.0) -> AircraftPerf:
     """
     Fill perf.v1_kts, vr_kts, v2_kts in-place using ISA conditions at
-    airport_elev_ft.  Returns the same object for chaining.
+    airport_elev_ft.  Uses ADRpy when available for validated atmosphere and
+    EAS→TAS conversion; falls back to simple ISA otherwise.
     """
-    # Air density at airport elevation (ISA)
-    rho = _RHO_SL * (1.0 - 6.87535e-6 * airport_elev_ft) ** 4.2561
-
-    # Stall speed at 1g, takeoff flap config
-    vs_fps = math.sqrt(
-        2.0 * perf.tow_lbs / (rho * perf.wing_area_ft2 * perf.clmax_to)
-    )
-    vs_kts = vs_fps * _FPS_TO_KTS
+    if _ADRPY:
+        atm   = _atm_mod.Atmosphere()
+        alt_m = _uc.feet2m(airport_elev_ft)
+        rho   = _s(atm.airdens_kgpm3(alt_m))         # kg/m³
+        w_n   = _uc.lbf2n(perf.tow_lbs)              # N
+        s_m2  = _uc.feet22m2(perf.wing_area_ft2)      # m²
+        vs_tas_mps = math.sqrt(2.0 * w_n / (rho * s_m2 * perf.clmax_to))
+        vs_kts = _uc.mps2kts(_s(atm.tas2eas(vs_tas_mps, alt_m)))
+    else:
+        rho    = _RHO_SL * (1.0 - 6.87535e-6 * airport_elev_ft) ** 4.2561
+        vs_fps = math.sqrt(2.0 * perf.tow_lbs / (rho * perf.wing_area_ft2 * perf.clmax_to))
+        vs_kts = vs_fps * _FPS_TO_KTS
 
     if perf.is_transport:
-        # FAR Part 25
         perf.v2_kts = round(1.13 * vs_kts, 1)
         perf.vr_kts = round(max(1.05 * vs_kts, perf.v2_kts - 5), 1)
         perf.v1_kts = round(perf.vr_kts * 0.94, 1)
     else:
-        # FAR Part 23
         perf.v2_kts = round(1.20 * vs_kts, 1)
         perf.vr_kts = round(1.10 * vs_kts, 1)
         perf.v1_kts = round(perf.vr_kts - 5.0, 1)
@@ -141,6 +175,7 @@ _DB: dict[str, AircraftPerf] = {
         flap_land_deg=30.0,
         n1_idle_pct=22.0,          # piston: low-idle power %
         n1_toga_pct=100.0,
+        engine_type="piston",
     ),
 
     "A320": AircraftPerf(
@@ -168,6 +203,7 @@ _DB: dict[str, AircraftPerf] = {
         flap_land_deg=35.0,
         n1_idle_pct=22.0,
         n1_toga_pct=100.0,
+        engine_type="turbofan_highbpr",
     ),
 
     "737": AircraftPerf(
@@ -195,6 +231,7 @@ _DB: dict[str, AircraftPerf] = {
         flap_land_deg=40.0,
         n1_idle_pct=22.0,
         n1_toga_pct=100.0,
+        engine_type="turbofan_highbpr",
     ),
 
     "A330-223": AircraftPerf(
@@ -222,6 +259,7 @@ _DB: dict[str, AircraftPerf] = {
         flap_land_deg=35.0,
         n1_idle_pct=22.0,
         n1_toga_pct=100.0,
+        engine_type="turbofan_highbpr",
     ),
 
     "787-8": AircraftPerf(
@@ -249,6 +287,7 @@ _DB: dict[str, AircraftPerf] = {
         flap_land_deg=30.0,
         n1_idle_pct=22.0,
         n1_toga_pct=100.0,
+        engine_type="turbofan_highbpr",
     ),
 
     "B747": AircraftPerf(
@@ -276,6 +315,7 @@ _DB: dict[str, AircraftPerf] = {
         flap_land_deg=30.0,
         n1_idle_pct=22.0,
         n1_toga_pct=100.0,
+        engine_type="turbofan_highbpr",
     ),
 
     "C130": AircraftPerf(
@@ -303,6 +343,7 @@ _DB: dict[str, AircraftPerf] = {
         flap_land_deg=50.0,
         n1_idle_pct=30.0,           # turboprop: prop speed at idle
         n1_toga_pct=100.0,
+        engine_type="turboprop",
     ),
 }
 
