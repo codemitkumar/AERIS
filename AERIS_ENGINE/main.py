@@ -11,9 +11,15 @@ Flight data is generated via FlightGenerator and streamed via WebSocket
 on ws://localhost:8765 at ~30 Hz.
 
 Terminal injection commands (type while simulation is running):
-    inject [captain|fo|both] [rate]   — start unreliable IAS fault
-    clear                             — stop fault injection
-    status                            — print current sim state
+    inject ias [captain|fo|both] [rate]          — IAS ADC drift
+    inject alt_disagree [captain|fo|both] [rate] — altimeter ADC drift (ft/tick)
+    inject descent [rate_fpm]                    — uncommanded altitude loss
+    inject windshear [rate_fpm] [duration_s]     — windshear burst (auto-stops)
+    inject energy [alt_fpm] [spd_kts_s]          — total energy bleed
+    inject turbulence [amplitude_fpm] [freq_hz]  — turbulence / G oscillation
+    clear [ias|alt_disagree|descent|windshear|energy|turbulence]  — clear one
+    clear                                        — clear all active injectors
+    status                                       — print injector states
 """
 
 import asyncio
@@ -21,12 +27,12 @@ import json
 import os
 import sys
 
-from data.ingestion.FlightGenerator      import FlightGenerator, Phase
-from data.ingestion.aircraft_performance import get_performance, list_models
-from communication.websocket_server      import WebSocketServer
-from core.data_bus                       import DataBus
-from modules.registry                    import register_all
-from emergencyInjector.unreliable_airspeed import UnreliableAirspeedInjector
+from data.ingestion.FlightGenerator       import FlightGenerator, Phase
+from data.ingestion.aircraft_performance  import get_performance, list_models
+from communication.websocket_server       import WebSocketServer
+from core.data_bus                        import DataBus
+from modules.registry                     import register_all
+from emergencyInjector.injection_manager  import InjectionManager
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 AIRPORT_CSV = os.path.join(BASE_DIR, "airports.csv")
@@ -105,7 +111,6 @@ async def flight_loop(gen: FlightGenerator, ws: WebSocketServer, log_fp, bus: Da
 
         gs = state["groundspeed_kts"]
 
-        # V-speed milestone logging
         if not _v1_logged and gs >= v1:
             _v1_logged = True
             print(f"[FLIGHT] *** V1 ({v1:.1f} kts) reached — t={gen.time:.1f}s — GO/NO-GO decision point ***")
@@ -130,10 +135,22 @@ async def flight_loop(gen: FlightGenerator, ws: WebSocketServer, log_fp, bus: Da
     print("[AERIS] Flight complete.")
 
 
-async def terminal_command_reader(injector: UnreliableAirspeedInjector, gen: FlightGenerator):
-    """Read injection commands from stdin while simulation runs."""
+async def terminal_command_reader(manager: InjectionManager, gen: FlightGenerator):
+    """Read fault-injection commands from stdin while the simulation runs."""
     loop = asyncio.get_event_loop()
-    print("[CMD] Terminal ready — commands: inject [captain|fo|both] [rate]  |  clear  |  status")
+    print(
+        "[CMD] Terminal ready — type a command:\n"
+        "  inject ias [captain|fo|both] [rate]\n"
+        "  inject alt_disagree [captain|fo|both] [rate_ft_per_tick]\n"
+        "  inject descent [rate_fpm]\n"
+        "  inject windshear [rate_fpm] [duration_s]\n"
+        "  inject energy [alt_fpm] [spd_kts_s]\n"
+        "  inject turbulence [amplitude_fpm] [freq_hz]\n"
+        "  clear [ias|alt_disagree|descent|windshear|energy|turbulence]\n"
+        "  clear   (clears all)\n"
+        "  status"
+    )
+
     while True:
         try:
             line = await loop.run_in_executor(None, sys.stdin.readline)
@@ -142,27 +159,90 @@ async def terminal_command_reader(injector: UnreliableAirspeedInjector, gen: Fli
             parts = line.strip().split()
             if not parts:
                 continue
+
             cmd = parts[0].lower()
+
+            # ── inject ───────────────────────────────────────────────────────
             if cmd == "inject":
-                side = parts[1] if len(parts) > 1 else "captain"
-                rate = float(parts[2]) if len(parts) > 2 else -0.1
-                injector.start(side=side, rate=rate)
+                if len(parts) < 2:
+                    print("[CMD] inject needs a fault type — see help above")
+                    continue
+
+                fault = parts[1].lower()
+
+                # Backward-compatible: 'inject captain -0.1' still means IAS
+                if fault in ("captain", "fo", "both"):
+                    side = fault
+                    rate = float(parts[2]) if len(parts) > 2 else -0.1
+                    manager.ias.start(side=side, rate=rate)
+
+                elif fault == "ias":
+                    side = parts[2] if len(parts) > 2 else "captain"
+                    rate = float(parts[3]) if len(parts) > 3 else -0.1
+                    manager.ias.start(side=side, rate=rate)
+
+                elif fault == "alt_disagree":
+                    side = parts[2] if len(parts) > 2 else "captain"
+                    rate = float(parts[3]) if len(parts) > 3 else 2.0
+                    manager.alt_disagree.start(side=side, rate=rate)
+
+                elif fault == "descent":
+                    rate_fpm = float(parts[2]) if len(parts) > 2 else 600.0
+                    manager.descent.start(rate_fpm=rate_fpm)
+
+                elif fault == "windshear":
+                    rate_fpm  = float(parts[2]) if len(parts) > 2 else 4_000.0
+                    duration  = float(parts[3]) if len(parts) > 3 else 15.0
+                    manager.windshear.start(rate_fpm=rate_fpm, duration_s=duration)
+
+                elif fault == "energy":
+                    alt_fpm   = float(parts[2]) if len(parts) > 2 else 400.0
+                    spd_kts_s = float(parts[3]) if len(parts) > 3 else 0.5
+                    manager.energy.start(alt_rate_fpm=alt_fpm, spd_rate_kts_s=spd_kts_s)
+
+                elif fault == "turbulence":
+                    amp  = float(parts[2]) if len(parts) > 2 else 600.0
+                    freq = float(parts[3]) if len(parts) > 3 else 0.25
+                    manager.turbulence.start(amplitude_fpm=amp, freq_hz=freq)
+
+                else:
+                    print(f"[CMD] Unknown fault type '{fault}'")
+
+            # ── clear ────────────────────────────────────────────────────────
             elif cmd == "clear":
-                injector.stop()
+                target = parts[1].lower() if len(parts) > 1 else "all"
+                _clear_map = {
+                    "ias":          manager.ias,
+                    "alt_disagree": manager.alt_disagree,
+                    "descent":      manager.descent,
+                    "windshear":    manager.windshear,
+                    "energy":       manager.energy,
+                    "turbulence":   manager.turbulence,
+                }
+                if target in _clear_map:
+                    _clear_map[target].stop()
+                else:
+                    manager.clear_all()
+
+            # ── status ───────────────────────────────────────────────────────
             elif cmd == "status":
-                print(
-                    f"[STATUS] phase={gen.phase.name}  "
-                    f"drift={injector.drift_pct:+.1f}%  active={injector.active}"
-                )
+                print(manager.status(gen))
+
             else:
-                print(f"[CMD] Unknown: '{cmd}'  —  inject [captain|fo|both] [rate]  |  clear  |  status")
+                print(f"[CMD] Unknown command '{cmd}' — try 'inject', 'clear', or 'status'")
+
         except (EOFError, KeyboardInterrupt):
             break
         except Exception as exc:
             print(f"[CMD] Error: {exc}")
 
 
-def _build_final_output(gen: FlightGenerator, jsonl_path: str, sim_dir: str) -> str:
+def _build_final_output(
+    gen: FlightGenerator,
+    jsonl_path: str,
+    sim_dir: str,
+    injected_emergency: str | None = None,
+) -> str:
     """Read the temp JSONL, wrap in the final schema, write JSON, delete JSONL."""
     import time as _time
 
@@ -173,10 +253,10 @@ def _build_final_output(gen: FlightGenerator, jsonl_path: str, sim_dir: str) -> 
             if line:
                 simulation_data.append(json.loads(line))
 
-    dist_nm = gen.route_distance_nm
+    dist_nm    = gen.route_distance_nm
     flight_hrs = dist_nm / gen._cruise_speed if gen._cruise_speed > 0 else 0
-    hours   = int(flight_hrs)
-    minutes = int((flight_hrs - hours) * 60)
+    hours      = int(flight_hrs)
+    minutes    = int((flight_hrs - hours) * 60)
 
     def apt_code(apt):
         return apt.get("iata") or apt.get("icao") or "UNKN"
@@ -187,8 +267,13 @@ def _build_final_output(gen: FlightGenerator, jsonl_path: str, sim_dir: str) -> 
         "destination":   apt_code(gen.dest),
         "distance":      f"{dist_nm:.0f} nm",
         "expectedTime":  f"{hours}h {minutes}m",
-        "simulationData": simulation_data,
     }
+
+    # Only add the key when an emergency was actually injected
+    if injected_emergency:
+        output["injectedEmergency"] = injected_emergency
+
+    output["simulationData"] = simulation_data
 
     safe_model = gen.perf.model.replace("-", "_")
     final_path = os.path.join(sim_dir, f"flight_{safe_model}_{int(_time.time())}.json")
@@ -212,8 +297,8 @@ async def async_main(model: str):
         f"V2={perf.v2_kts:.1f} kts  →  cruise FL{int(perf.cruise_alt_ft/100):03d}"
     )
 
-    injector = UnreliableAirspeedInjector()
-    gen = FlightGenerator(perf, AIRPORT_CSV, dt=1/30, emergency_fn=injector)
+    manager = InjectionManager()
+    gen = FlightGenerator(perf, AIRPORT_CSV, dt=1/30, emergency_fn=manager)
     ws  = WebSocketServer(host="0.0.0.0", port=8765)
     bus = DataBus()
     register_all(bus, ws=ws)
@@ -232,7 +317,7 @@ async def async_main(model: str):
     )
 
     ws_task  = asyncio.create_task(ws.start())
-    cmd_task = asyncio.create_task(terminal_command_reader(injector, gen))
+    cmd_task = asyncio.create_task(terminal_command_reader(manager, gen))
 
     with open(tmp_path, "w", encoding="utf-8") as log_fp:
         await flight_loop(gen, ws, log_fp, bus)
@@ -240,8 +325,11 @@ async def async_main(model: str):
     ws_task.cancel()
     cmd_task.cancel()
 
-    final = _build_final_output(gen, tmp_path, sim_dir)
+    final = _build_final_output(gen, tmp_path, sim_dir, manager.injected_summary)
     print(f"[AERIS] Saved → {final}")
+
+    if manager.injected_summary:
+        print(f"[AERIS] Injected emergencies recorded: {manager.injected_summary}")
 
 
 def main():

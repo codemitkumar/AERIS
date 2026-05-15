@@ -243,17 +243,23 @@ class FlightGenerator:
                 except ValueError:
                     continue
                 airports.append({
-                    "lat":       lat,
-                    "lon":       lon,
-                    "icao":      (r.get("ident") or r.get("icao_code") or "").strip(),
-                    "iata":      r.get("iata_code", "").strip(),
-                    "name":      r.get("name", "").strip(),
-                    "scheduled": r.get("scheduled_service", "no") == "yes",
+                    "lat":          lat,
+                    "lon":          lon,
+                    "icao":         (r.get("ident") or r.get("icao_code") or "").strip(),
+                    "iata":         r.get("iata_code", "").strip(),
+                    "name":         r.get("name", "").strip(),
+                    "scheduled":    r.get("scheduled_service", "no") == "yes",
+                    "airport_type": r.get("type", ""),
                 })
         return airports
 
+    _TRANSPORT_AIRPORT_TYPES = frozenset({"large_airport", "medium_airport"})
+
     def _pick_airports(self, perf):
-        pool = [a for a in self.airports if a["scheduled"]] if perf.is_transport else self.airports
+        if perf.is_transport:
+            pool = [a for a in self.airports if a["airport_type"] in self._TRANSPORT_AIRPORT_TYPES]
+        else:
+            pool = self.airports
         if len(pool) < 10:
             pool = self.airports
 
