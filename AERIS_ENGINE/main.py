@@ -298,10 +298,17 @@ async def async_main(model: str):
     )
 
     manager = InjectionManager()
+
+    # 5 % chance of a random fault being injected automatically during flight
+    if manager.configure_auto_inject(probability=0.05):
+        print("[AERIS] Auto-inject ARMED — a fault will fire during flight")
+    else:
+        print("[AERIS] Auto-inject rolled clean — no automatic fault this flight")
+
     gen = FlightGenerator(perf, AIRPORT_CSV, dt=1/30, emergency_fn=manager)
     ws  = WebSocketServer(host="0.0.0.0", port=8765)
     bus = DataBus()
-    register_all(bus, ws=ws)
+    register_all(bus, ws=ws, perf=perf)
 
     import time as _time
     sim_dir  = os.path.join(BASE_DIR, "simulationdata")

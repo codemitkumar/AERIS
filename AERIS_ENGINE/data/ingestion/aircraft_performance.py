@@ -104,6 +104,13 @@ class AircraftPerf:
     # Engine thermodynamic type (used by ADRpy thrust factor)
     engine_type:   str   = "turbofan_highbpr"   # piston | turboprop | turbofan_highbpr
 
+    # Maximum operating speeds (from type certificate / flight manual)
+    # Transport: VMO (kts IAS) and MMO (Mach).  GA: VNE as vmo_kts, mmo=0.
+    # vno_kts: normal operating speed (GA yellow-arc start); 0 if not applicable.
+    vmo_kts: float = 350.0   # hard IAS limit — VMO for jets, VNE for GA
+    mmo:     float = 0.82    # hard Mach limit (0.0 = not applicable)
+    vno_kts: float = 0.0     # GA caution zone start (0 = not used)
+
     # Computed V-speeds (filled by compute_vspeeds)
     v1_kts:  float = 0.0
     vr_kts:  float = 0.0
@@ -176,6 +183,9 @@ _DB: dict[str, AircraftPerf] = {
         n1_idle_pct=22.0,          # piston: low-idle power %
         n1_toga_pct=100.0,
         engine_type="piston",
+        vmo_kts=163.0,   # VNE — POH Section 2
+        mmo=0.0,         # no Mach limit
+        vno_kts=127.0,   # VNO — structural cruise limit (yellow-arc start)
     ),
 
     "A320": AircraftPerf(
@@ -204,6 +214,8 @@ _DB: dict[str, AircraftPerf] = {
         n1_idle_pct=22.0,
         n1_toga_pct=100.0,
         engine_type="turbofan_highbpr",
+        vmo_kts=350.0,   # A320 FCOM 1.02.10
+        mmo=0.82,
     ),
 
     "737": AircraftPerf(
@@ -232,6 +244,8 @@ _DB: dict[str, AircraftPerf] = {
         n1_idle_pct=22.0,
         n1_toga_pct=100.0,
         engine_type="turbofan_highbpr",
+        vmo_kts=340.0,   # 737 NG FCTM
+        mmo=0.82,
     ),
 
     "A330-223": AircraftPerf(
@@ -260,6 +274,8 @@ _DB: dict[str, AircraftPerf] = {
         n1_idle_pct=22.0,
         n1_toga_pct=100.0,
         engine_type="turbofan_highbpr",
+        vmo_kts=330.0,   # A330 FCOM 1.02.10
+        mmo=0.86,
     ),
 
     "787-8": AircraftPerf(
@@ -288,6 +304,8 @@ _DB: dict[str, AircraftPerf] = {
         n1_idle_pct=22.0,
         n1_toga_pct=100.0,
         engine_type="turbofan_highbpr",
+        vmo_kts=330.0,   # 787 AMM
+        mmo=0.90,
     ),
 
     "B747": AircraftPerf(
@@ -316,6 +334,8 @@ _DB: dict[str, AircraftPerf] = {
         n1_idle_pct=22.0,
         n1_toga_pct=100.0,
         engine_type="turbofan_highbpr",
+        vmo_kts=365.0,   # 747-400 FCOM
+        mmo=0.92,
     ),
 
     "C130": AircraftPerf(
@@ -344,6 +364,8 @@ _DB: dict[str, AircraftPerf] = {
         n1_idle_pct=30.0,           # turboprop: prop speed at idle
         n1_toga_pct=100.0,
         engine_type="turboprop",
+        vmo_kts=316.0,   # C-130H flight manual (VMO at sea level)
+        mmo=0.0,         # turboprop — no Mach limit published
     ),
 }
 
