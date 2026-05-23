@@ -169,7 +169,24 @@ class FlightGenerator:
 
         self._fuel_rate_cruise = t2w * 0.12   # % per second at cruise multiplier 1.0
 
-        # ── Airports ───────────────────────────────────────────────────
+        # ── Realism oscillators (natural flight variation) ────────────
+        # Cruise altitude wander: slow sinusoidal ±50–150 ft around cruise_alt
+        self._cr_vs_amp   = random.uniform(40.0, 150.0)   # ft/min amplitude
+        self._cr_vs_freq  = random.uniform(0.002, 0.008)  # Hz (120–500 s period)
+        self._cr_vs_phase = random.uniform(0.0, 2 * math.pi)
+        self._cr_alt_bias = 0.0                            # integrates VS drift
+
+        # Speed hunting: autothrottle cycles ±1–3 kts around cruise speed
+        self._spd_hunt_amp  = random.uniform(1.0, 3.0)   # kts
+        self._spd_hunt_freq = random.uniform(0.01, 0.04) # Hz (25–100 s period)
+        self._spd_hunt_phase = random.uniform(0.0, 2 * math.pi)
+
+        # Climb VS variation: ±5–15 % of nominal climb rate
+        self._cl_vs_noise_amp  = self._vs_climb * random.uniform(0.05, 0.15)
+        self._cl_vs_noise_freq = random.uniform(0.03, 0.08)
+        self._cl_vs_noise_phase = random.uniform(0.0, 2 * math.pi)
+
+        # Airports ───────────────────────────────────────────────────
         self.airports = self._load_airports(airport_csv)
         self.origin, self.dest, self.route_distance_nm = self._pick_airports(perf)
 
@@ -186,6 +203,28 @@ class FlightGenerator:
         self.cruise_alt = min(perf.cruise_alt_ft, 30000)
         if perf.model == "c172p":
             self.cruise_alt = random.randint(5000, 10000)
+
+        # ── Engine efficiency (factory-fresh → slightly worn: 0.93–1.00) ─────
+        self.engine_eff = [random.uniform(0.93, 1.00) for _ in range(perf.engine_count)]
+
+        # ── Alternate airports & fuel plan ────────────────────────────────────
+        self.alternates       = self._pick_alternates(perf)
+        self.fuel_plan        = self._compute_fuel_plan(perf)
+        self._initial_fuel_lbs = self.fuel_plan["total_loaded_lbs"]
+
+        # ── Tank state ────────────────────────────────────────────────────────
+        self.fuel_left_lbs    = 0.0
+        self.fuel_right_lbs   = 0.0
+        self.fuel_center_lbs  = 0.0
+        self._init_tanks(self._initial_fuel_lbs, perf)
+
+        # Sync fuel % to lbs (overrides the 100.0 placeholder set above)
+        self.fuel              = 100.0
+        self.fuel_total_lbs    = self._initial_fuel_lbs
+        self.fuel_used_lbs     = 0.0
+        self.fuel_flow_total_lbs_hr = 0.0
+        self.fuel_flow_eng1_lbs_hr  = 0.0
+        self.fuel_flow_eng2_lbs_hr  = 0.0
 
         # ── Throttle / engines ────────────────────────────────────────
         self.throttle = 0.0   # 0–1 forward thrust lever position
@@ -225,7 +264,9 @@ class FlightGenerator:
             "origin":            self.origin,
             "destination":       self.dest,
             "route_distance_nm": round(self.route_distance_nm, 1),
-            "initial_fuel_lbs":  perf.fuel_capacity_lbs,
+            "initial_fuel_lbs":  self._initial_fuel_lbs,
+            "fuel_plan":         self.fuel_plan,
+            "alternates":        self.alternates,
         }
 
     # ── Airport helpers ────────────────────────────────────────────────
@@ -282,19 +323,127 @@ class FlightGenerator:
 
         return origin, dest, dist
 
+    # ── Alternate airports ─────────────────────────────────────────────
+    def _pick_alternates(self, perf):
+        if perf.is_transport:
+            pool    = [a for a in self.airports if a["airport_type"] in self._TRANSPORT_AIRPORT_TYPES]
+            min_d, max_d, count = 80.0, 400.0, random.randint(2, 3)
+        else:
+            pool    = self.airports
+            min_d, max_d, count = 20.0, 150.0, random.randint(1, 2)
+
+        candidates = []
+        for apt in pool:
+            if apt["icao"] == self.dest["icao"]:
+                continue
+            d = haversine_nm(self.dest["lat"], self.dest["lon"], apt["lat"], apt["lon"])
+            if min_d <= d <= max_d:
+                candidates.append({
+                    "iata":        apt["iata"],
+                    "icao":        apt["icao"],
+                    "name":        apt["name"],
+                    "distance_nm": round(d, 1),
+                })
+
+        if not candidates:
+            return []
+        selected = random.sample(candidates, min(count, len(candidates)))
+        selected.sort(key=lambda x: x["distance_nm"])
+        return selected
+
+    # ── Fuel plan (ICAO Annex 6 / EU-OPS 1.255) ───────────────────────
+    def _compute_fuel_plan(self, perf):
+        ff_climb  = perf.ff_climb_lbs_hr   * perf.engine_count
+        ff_cruise = perf.ff_cruise_lbs_hr  * perf.engine_count
+        ff_desc   = perf.ff_descent_lbs_hr * perf.engine_count
+        ff_taxi   = perf.ff_taxi_lbs_hr    * perf.engine_count
+        ff_hold   = perf.ff_holding_lbs_hr * perf.engine_count
+
+        # Trip fuel: climb + cruise + descent
+        climb_time_hr  = self.cruise_alt / self._vs_climb / 60.0
+        climb_fuel     = ff_climb * climb_time_hr
+        climb_dist_nm  = (self._cruise_speed * 0.5) * climb_time_hr
+        cruise_dist    = max(0.0, self.route_distance_nm - climb_dist_nm - 60.0)
+        cruise_fuel    = ff_cruise * (cruise_dist / max(1.0, self._cruise_speed))
+        descent_fuel   = ff_desc  * (60.0        / max(1.0, self._cruise_speed * 0.85))
+        trip_fuel      = climb_fuel + cruise_fuel + descent_fuel
+
+        # Taxi: 15 min ground idle each direction
+        taxi_fuel = ff_taxi * (15.0 / 60.0)
+
+        # Contingency: 5 % of trip (EASA minimum)
+        contingency = trip_fuel * 0.05
+
+        # Alternate fuel: fuel to reach furthest alternate (incl. 10 % buffer)
+        alt_fuel = 0.0
+        for alt_ap in self.alternates:
+            af = ff_cruise * (alt_ap["distance_nm"] / max(1.0, self._cruise_speed)) * 1.10
+            alt_ap["fuel_lbs"] = round(af, 1)
+            alt_fuel = max(alt_fuel, af)
+
+        # Final reserve: 30 min holding (transport) / 45 min (GA)
+        hold_min      = 30.0 if perf.is_transport else 45.0
+        final_reserve = ff_hold * (hold_min / 60.0)
+
+        # Extra: captain discretion 0–2 % of trip
+        extra = trip_fuel * random.uniform(0.0, 0.02)
+
+        total = taxi_fuel + trip_fuel + contingency + alt_fuel + final_reserve + extra
+        total = min(total, perf.fuel_capacity_lbs)
+
+        return {
+            "taxi_fuel_lbs":        round(taxi_fuel,     1),
+            "trip_fuel_lbs":        round(trip_fuel,     1),
+            "contingency_fuel_lbs": round(contingency,   1),
+            "alternate_fuel_lbs":   round(alt_fuel,      1),
+            "final_reserve_lbs":    round(final_reserve, 1),
+            "additional_fuel_lbs":  0.0,
+            "extra_fuel_lbs":       round(extra,         1),
+            "total_loaded_lbs":     round(total,         1),
+        }
+
+    # ── Tank initialisation ────────────────────────────────────────────
+    def _init_tanks(self, total_lbs, perf):
+        if perf.is_transport:
+            self.fuel_center_lbs = round(total_lbs * 0.25, 1)
+            self.fuel_left_lbs   = round(total_lbs * 0.375, 1)
+            self.fuel_right_lbs  = round(total_lbs - self.fuel_center_lbs - self.fuel_left_lbs, 1)
+        else:
+            self.fuel_center_lbs = 0.0
+            self.fuel_left_lbs   = round(total_lbs * 0.50, 1)
+            self.fuel_right_lbs  = round(total_lbs - self.fuel_left_lbs, 1)
+
     # ── Utilities ─────────────────────────────────────────────────────
     def _noise(self, v, n):
         return v + random.uniform(-n, n)
 
-    def _phase_fuel_mult(self) -> float:
-        return {
-            Phase.GROUND_ROLL: 1.2,
-            Phase.ROTATION:    1.3,
-            Phase.CLIMB:       1.5,
-            Phase.CRUISE:      1.0,
-            Phase.DESCENT:     0.6,
-            Phase.LANDING:     0.3,
-        }.get(self.phase, 1.0)
+    def _get_fuel_flow_per_eng(self) -> float:
+        """Nominal fuel flow for current phase (lbs/hr, per engine)."""
+        p = self.perf
+        if self.phase in (Phase.GROUND_ROLL, Phase.ROTATION, Phase.LANDING):
+            return p.ff_taxi_lbs_hr
+        elif self.phase == Phase.CLIMB:
+            return p.ff_climb_lbs_hr
+        elif self.phase == Phase.CRUISE:
+            return p.ff_cruise_lbs_hr * (0.90 + self.throttle * 0.12)
+        elif self.phase == Phase.DESCENT:
+            return p.ff_descent_lbs_hr
+        return p.ff_taxi_lbs_hr
+
+    def _drain_tanks(self, burn_lbs: float) -> None:
+        if self.perf.is_transport:
+            if self.fuel_center_lbs >= burn_lbs:
+                self.fuel_center_lbs -= burn_lbs
+            else:
+                remain = burn_lbs - self.fuel_center_lbs
+                self.fuel_center_lbs = 0.0
+                half = remain / 2.0
+                self.fuel_left_lbs  = max(0.0, self.fuel_left_lbs  - half)
+                self.fuel_right_lbs = max(0.0, self.fuel_right_lbs - half)
+        else:
+            half = burn_lbs / 2.0
+            self.fuel_left_lbs  = max(0.0, self.fuel_left_lbs  - half)
+            self.fuel_right_lbs = max(0.0, self.fuel_right_lbs - half)
 
     # ── Logging gate ──────────────────────────────────────────────────
     def should_log(self) -> bool:
@@ -477,11 +626,22 @@ class FlightGenerator:
 
         self.heading = (self.heading + turn_rate * self.dt) % 360
 
-    # ── Fuel burn ─────────────────────────────────────────────────────
+    # ── Fuel burn (lbs-based, per-engine efficiency) ──────────────────
     def _fuel_burn(self):
-        mult = self._phase_fuel_mult()
-        burn = (self._fuel_rate_cruise * mult + self.fuel_leak_rate) * self.dt
-        self.fuel = max(0.0, self.fuel - burn)
+        p   = self.perf
+        nominal_per_eng = self._get_fuel_flow_per_eng()   # lbs/hr
+
+        # Each engine burns more fuel when efficiency < 1.0 (degraded SFC)
+        flows = [nominal_per_eng / max(0.01, eff) for eff in self.engine_eff]
+        self.fuel_flow_total_lbs_hr = sum(flows)
+        self.fuel_flow_eng1_lbs_hr  = flows[0]
+        self.fuel_flow_eng2_lbs_hr  = flows[1] if len(flows) > 1 else 0.0
+
+        burn_lbs = self.fuel_flow_total_lbs_hr * self.dt / 3600.0
+        self._drain_tanks(burn_lbs)
+        self.fuel_used_lbs  += burn_lbs
+        self.fuel_total_lbs  = max(0.0, self.fuel_left_lbs + self.fuel_right_lbs + self.fuel_center_lbs)
+        self.fuel            = self.fuel_total_lbs / self._initial_fuel_lbs * 100.0 if self._initial_fuel_lbs > 0 else 0.0
 
     # ── Core physics ──────────────────────────────────────────────────
     def _physics(self):
@@ -495,16 +655,30 @@ class FlightGenerator:
             self.alt  += 5.0
 
         elif self.phase == Phase.CLIMB:
-            self.vs    = self._vs_climb
+            cl_noise = self._cl_vs_noise_amp * math.sin(
+                2 * math.pi * self._cl_vs_noise_freq * self.time + self._cl_vs_noise_phase
+            )
+            self.vs    = self._vs_climb + cl_noise
             self.alt  += self.vs * self.dt / 60.0
             self.speed += 0.02 * (p.climb_speed_kts - self.speed)
             self.pitch  = p.climb_pitch
 
         elif self.phase == Phase.CRUISE:
-            self.vs    = 0.0
-            self.alt   = self.cruise_alt
-            self.speed += 0.01 * (self._cruise_speed - self.speed)
-            self.pitch  = 2.0
+            # Natural VS wander — slow sinusoidal autoflight hunting
+            cr_vs = self._cr_vs_amp * math.sin(
+                2 * math.pi * self._cr_vs_freq * self.time + self._cr_vs_phase
+            )
+            self.vs      = cr_vs
+            self._cr_alt_bias = clamp(
+                self._cr_alt_bias + cr_vs * self.dt / 60.0, -200.0, 200.0
+            )
+            self.alt   = self.cruise_alt + self._cr_alt_bias
+            # Autothrottle speed hunting ±1–3 kts
+            spd_target = self._cruise_speed + self._spd_hunt_amp * math.sin(
+                2 * math.pi * self._spd_hunt_freq * self.time + self._spd_hunt_phase
+            )
+            self.speed += 0.01 * (spd_target - self.speed)
+            self.pitch  = 2.0 + cr_vs * 0.003   # slight pitch coupling with VS
 
         elif self.phase == Phase.DESCENT:
             self.vs    = self._vs_descent
@@ -602,17 +776,24 @@ class FlightGenerator:
 
         n1_pct  = [round(self._noise(n1_cmd, 0.4), 1) for _ in range(p.engine_count)]
         n2_pct  = [round(self._noise(n2_cmd, 0.3), 1) for _ in range(p.engine_count)]
-        egt_c   = [round(self._noise(egt_cmd, 5.0), 0) for _ in range(p.engine_count)]
+        # Degraded engine efficiency raises EGT (same thrust = more heat)
+        egt_c   = [round(self._noise(egt_cmd / max(0.01, self.engine_eff[i]), 5.0), 0)
+                   for i in range(p.engine_count)]
 
-        mult              = self._phase_fuel_mult()
-        burn_pct_per_sec  = self._fuel_rate_cruise * mult
-        burn_lbs_per_sec  = burn_pct_per_sec * p.fuel_capacity_lbs / 100.0
-        ff_per_eng_pph    = burn_lbs_per_sec * 3600.0 / p.engine_count
-        fuel_flow_pph     = [round(ff_per_eng_pph, 0) for _ in range(p.engine_count)]
+        # Per-engine fuel flow derived from lbs-based burn (already computed in _fuel_burn)
+        _base_ff_per_eng = self.fuel_flow_total_lbs_hr / max(1, p.engine_count)
+        fuel_flow_pph = [
+            round(self._noise(
+                self.fuel_flow_eng1_lbs_hr if i == 0 else
+                self.fuel_flow_eng2_lbs_hr if i == 1 else _base_ff_per_eng,
+                _base_ff_per_eng * 0.02,
+            ), 0)
+            for i in range(p.engine_count)
+        ]
 
         # ── Fuel / weight ─────────────────────────────────────────────
-        fuel_lbs         = self.fuel / 100.0 * p.fuel_capacity_lbs
-        fuel_burned_lbs  = (100.0 - self.fuel) / 100.0 * p.fuel_capacity_lbs
+        fuel_lbs         = self.fuel_total_lbs
+        fuel_burned_lbs  = self.fuel_used_lbs
         gross_weight_lbs = p.tow_lbs - fuel_burned_lbs
 
         # ── ADRpy: thrust available + live stall speed ─────────────────
@@ -745,6 +926,18 @@ class FlightGenerator:
             "fuel_pct":        round(self.fuel, 2),
             "fuel_lbs":        round(fuel_lbs),
             "gross_weight_lbs": round(gross_weight_lbs),
+
+            # ── Fuel system (detailed) ────────────────────────────────
+            "fuel_total_lbs":         round(self.fuel_total_lbs,         1),
+            "fuel_used_lbs":          round(self.fuel_used_lbs,          1),
+            "fuel_left_lbs":          round(self.fuel_left_lbs,          1),
+            "fuel_right_lbs":         round(self.fuel_right_lbs,         1),
+            "fuel_center_lbs":        round(self.fuel_center_lbs,        1),
+            "fuel_flow_total_lbs_hr": round(self.fuel_flow_total_lbs_hr, 1),
+            "fuel_flow_eng1_lbs_hr":  round(self.fuel_flow_eng1_lbs_hr,  1),
+            "fuel_flow_eng2_lbs_hr":  round(self.fuel_flow_eng2_lbs_hr,  1),
+            "engine_eff_eng1":        round(self.engine_eff[0],          4),
+            "engine_eff_eng2":        round(self.engine_eff[1] if len(self.engine_eff) > 1 else 0.0, 4),
 
             # ── Flight controls ──────────────────────────────────────
             "flap_deg":        round(self.flap_deg, 1),

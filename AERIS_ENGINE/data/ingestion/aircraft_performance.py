@@ -111,6 +111,15 @@ class AircraftPerf:
     mmo:     float = 0.82    # hard Mach limit (0.0 = not applicable)
     vno_kts: float = 0.0     # GA caution zone start (0 = not used)
 
+    # Fuel flow rates (lbs/hr *per engine*) at standard published conditions.
+    # Multiply by engine_count for total aircraft fuel flow.
+    ff_cruise_lbs_hr:  float = 0.0   # long-range cruise (typical cruise power)
+    ff_climb_lbs_hr:   float = 0.0   # climb power (MCDU CLB / full climb thrust)
+    ff_descent_lbs_hr: float = 0.0   # flight-idle descent
+    ff_taxi_lbs_hr:    float = 0.0   # ground idle / taxi
+    ff_holding_lbs_hr: float = 0.0   # holding pattern at holding_speed_kts
+    holding_speed_kts: float = 0.0   # published holding speed (kts IAS)
+
     # Computed V-speeds (filled by compute_vspeeds)
     v1_kts:  float = 0.0
     vr_kts:  float = 0.0
@@ -186,6 +195,13 @@ _DB: dict[str, AircraftPerf] = {
         vmo_kts=163.0,   # VNE — POH Section 2
         mmo=0.0,         # no Mach limit
         vno_kts=127.0,   # VNO — structural cruise limit (yellow-arc start)
+        # Lycoming O-320-D2J: POH Section 5 (fuel consumption)
+        ff_cruise_lbs_hr=36.0,    # 6 US gph × 6 lbs/gal (75% power)
+        ff_climb_lbs_hr=48.0,     # 8 US gph (full rich, Vy climb)
+        ff_descent_lbs_hr=18.0,   # 3 US gph (idle descent, lean)
+        ff_taxi_lbs_hr=12.0,      # 2 US gph (warm idle)
+        ff_holding_lbs_hr=30.0,   # 5 US gph (best-endurance power)
+        holding_speed_kts=80.0,
     ),
 
     "A320": AircraftPerf(
@@ -216,6 +232,13 @@ _DB: dict[str, AircraftPerf] = {
         engine_type="turbofan_highbpr",
         vmo_kts=350.0,   # A320 FCOM 1.02.10
         mmo=0.82,
+        # CFM56-5B4 at ISA, M0.78, FL370 (FCOM performance tables)
+        ff_cruise_lbs_hr=2400.0,
+        ff_climb_lbs_hr=3500.0,
+        ff_descent_lbs_hr=350.0,   # flight idle
+        ff_taxi_lbs_hr=300.0,
+        ff_holding_lbs_hr=1800.0,  # 210 kt holding
+        holding_speed_kts=210.0,
     ),
 
     "737": AircraftPerf(
@@ -246,6 +269,13 @@ _DB: dict[str, AircraftPerf] = {
         engine_type="turbofan_highbpr",
         vmo_kts=340.0,   # 737 NG FCTM
         mmo=0.82,
+        # CFM56-3 at ISA, M0.78, FL350
+        ff_cruise_lbs_hr=2400.0,
+        ff_climb_lbs_hr=3800.0,
+        ff_descent_lbs_hr=400.0,
+        ff_taxi_lbs_hr=320.0,
+        ff_holding_lbs_hr=1900.0,
+        holding_speed_kts=210.0,
     ),
 
     "A330-223": AircraftPerf(
@@ -276,6 +306,13 @@ _DB: dict[str, AircraftPerf] = {
         engine_type="turbofan_highbpr",
         vmo_kts=330.0,   # A330 FCOM 1.02.10
         mmo=0.86,
+        # PW4168A at ISA, M0.82, FL380
+        ff_cruise_lbs_hr=5000.0,
+        ff_climb_lbs_hr=7000.0,
+        ff_descent_lbs_hr=700.0,
+        ff_taxi_lbs_hr=500.0,
+        ff_holding_lbs_hr=3000.0,
+        holding_speed_kts=220.0,
     ),
 
     "787-8": AircraftPerf(
@@ -306,6 +343,13 @@ _DB: dict[str, AircraftPerf] = {
         engine_type="turbofan_highbpr",
         vmo_kts=330.0,   # 787 AMM
         mmo=0.90,
+        # GEnx-1B76 at ISA, M0.85, FL430 (TSFC ~0.500 lb/lbf/hr)
+        ff_cruise_lbs_hr=3400.0,
+        ff_climb_lbs_hr=5500.0,
+        ff_descent_lbs_hr=500.0,
+        ff_taxi_lbs_hr=400.0,
+        ff_holding_lbs_hr=2200.0,
+        holding_speed_kts=220.0,
     ),
 
     "B747": AircraftPerf(
@@ -336,6 +380,13 @@ _DB: dict[str, AircraftPerf] = {
         engine_type="turbofan_highbpr",
         vmo_kts=365.0,   # 747-400 FCOM
         mmo=0.92,
+        # CF6-80C2B1F at ISA, M0.855, FL400
+        ff_cruise_lbs_hr=3200.0,
+        ff_climb_lbs_hr=5200.0,
+        ff_descent_lbs_hr=650.0,
+        ff_taxi_lbs_hr=400.0,
+        ff_holding_lbs_hr=2200.0,
+        holding_speed_kts=230.0,
     ),
 
     "C130": AircraftPerf(
@@ -366,6 +417,13 @@ _DB: dict[str, AircraftPerf] = {
         engine_type="turboprop",
         vmo_kts=316.0,   # C-130H flight manual (VMO at sea level)
         mmo=0.0,         # turboprop — no Mach limit published
+        # Allison T56-A-15 at 21,000 ft, 290 kts
+        ff_cruise_lbs_hr=1100.0,
+        ff_climb_lbs_hr=1500.0,
+        ff_descent_lbs_hr=500.0,
+        ff_taxi_lbs_hr=300.0,
+        ff_holding_lbs_hr=800.0,
+        holding_speed_kts=150.0,
     ),
 }
 

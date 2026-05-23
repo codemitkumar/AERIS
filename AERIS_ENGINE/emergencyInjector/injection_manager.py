@@ -6,6 +6,7 @@ from emergencyInjector.altitude.uncommanded_descent     import UncommandedDescen
 from emergencyInjector.altitude.rapid_altitude_loss     import RapidAltitudeLossInjector
 from emergencyInjector.altitude.energy_bleed            import EnergyBleedInjector
 from emergencyInjector.altitude.structural_g_event      import StructuralGEventInjector
+from emergencyInjector.fuel.fuel_leak                   import FuelLeakInjector
 
 
 class InjectionManager:
@@ -24,14 +25,15 @@ class InjectionManager:
 
     Supported inject commands (parsed by terminal_command_reader in main.py)
     -------------------------------------------------------------------------
-    inject ias [captain|fo|both] [rate]          — IAS ADC drift
-    inject alt_disagree [captain|fo|both] [rate] — altimeter ADC drift (ft/tick)
-    inject descent [rate_fpm]                    — uncommanded altitude loss
-    inject windshear [rate_fpm] [duration_s]     — short windshear burst
-    inject energy [alt_fpm] [spd_kts_s]          — simultaneous alt+speed bleed
-    inject turbulence [amplitude_fpm] [freq_hz]  — sinusoidal VS / G oscillation
-    clear [type|all]                             — stop one or all injectors
-    status                                       — print active injector states
+    inject ias [captain|fo|both] [rate]                    — IAS ADC drift
+    inject alt_disagree [captain|fo|both] [rate]          — altimeter ADC drift (ft/tick)
+    inject descent [rate_fpm]                             — uncommanded altitude loss
+    inject windshear [rate_fpm] [duration_s]              — short windshear burst
+    inject energy [alt_fpm] [spd_kts_s]                  — simultaneous alt+speed bleed
+    inject turbulence [amplitude_fpm] [freq_hz]           — sinusoidal VS / G oscillation
+    inject fuel_leak [rate_lbs_hr] [left|right|center|all] — tank fuel leak
+    clear [type|all]                                      — stop one or all injectors
+    status                                                — print active injector states
     """
 
     def __init__(self):
@@ -41,6 +43,7 @@ class InjectionManager:
         self.windshear    = RapidAltitudeLossInjector()
         self.energy       = EnergyBleedInjector()
         self.turbulence   = StructuralGEventInjector()
+        self.fuel_leak    = FuelLeakInjector()
 
         self._all = [
             self.ias,
@@ -49,6 +52,7 @@ class InjectionManager:
             self.windshear,
             self.energy,
             self.turbulence,
+            self.fuel_leak,
         ]
 
         # Accumulates names of every fault that was ever activated this flight
@@ -120,6 +124,10 @@ class InjectionManager:
             lambda: self.turbulence.start(
                 amplitude_fpm=random.uniform(400.0, 800.0),
                 freq_hz=random.uniform(0.15, 0.5),
+            ),
+            lambda: self.fuel_leak.start(
+                rate_lbs_hr=random.uniform(200.0, 1_000.0),
+                tank=random.choice(["left", "right", "center"]),
             ),
         ])
 
