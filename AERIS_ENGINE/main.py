@@ -146,7 +146,8 @@ async def terminal_command_reader(manager: InjectionManager, gen: FlightGenerato
         "  inject windshear [rate_fpm] [duration_s]\n"
         "  inject energy [alt_fpm] [spd_kts_s]\n"
         "  inject turbulence [amplitude_fpm] [freq_hz]\n"
-        "  clear [ias|alt_disagree|descent|windshear|energy|turbulence]\n"
+        "  inject fuel_leak [rate_lbs_hr] [left|right|center|all]\n"
+        "  clear [ias|alt_disagree|descent|windshear|energy|turbulence|fuel_leak]\n"
         "  clear   (clears all)\n"
         "  status"
     )
@@ -205,6 +206,11 @@ async def terminal_command_reader(manager: InjectionManager, gen: FlightGenerato
                     freq = float(parts[3]) if len(parts) > 3 else 0.25
                     manager.turbulence.start(amplitude_fpm=amp, freq_hz=freq)
 
+                elif fault == "fuel_leak":
+                    rate = float(parts[2]) if len(parts) > 2 else 400.0
+                    tank = parts[3]        if len(parts) > 3 else "left"
+                    manager.fuel_leak.start(rate_lbs_hr=rate, tank=tank)
+
                 else:
                     print(f"[CMD] Unknown fault type '{fault}'")
 
@@ -218,6 +224,7 @@ async def terminal_command_reader(manager: InjectionManager, gen: FlightGenerato
                     "windshear":    manager.windshear,
                     "energy":       manager.energy,
                     "turbulence":   manager.turbulence,
+                    "fuel_leak":    manager.fuel_leak,
                 }
                 if target in _clear_map:
                     _clear_map[target].stop()

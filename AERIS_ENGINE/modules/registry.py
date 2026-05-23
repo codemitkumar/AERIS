@@ -6,6 +6,8 @@ from modules.math.rapid_altitude_loss      import RapidAltitudeLossModule
 from modules.math.energy_state             import EnergyStateModule
 from modules.math.structural_altitude_rate import StructuralAltitudeRateModule
 from modules.math.overspeed                import OverspeedModule
+from modules.math.fuel_leak_detection      import FuelLeakDetectionModule
+from modules.math.fuel_imbalance           import FuelImbalanceModule
 
 
 def register_all(bus: DataBus, ws=None, perf=None) -> None:
@@ -31,3 +33,7 @@ def register_all(bus: DataBus, ws=None, perf=None) -> None:
     RapidAltitudeLossModule(ws=ws).attach(bus)           # ALT-3: windshear / rapid loss
     EnergyStateModule(ws=ws).attach(bus)                 # ALT-4: total energy protection
     StructuralAltitudeRateModule(ws=ws).attach(bus)      # ALT-5: G-limit / altitude jerk
+
+    # ── Fuel ──────────────────────────────────────────────────────────────────
+    FuelLeakDetectionModule(ws=ws).attach(bus)           # FUEL-1: unaccounted tank loss
+    FuelImbalanceModule(ws=ws).attach(bus)               # FUEL-2: L/R tank imbalance
