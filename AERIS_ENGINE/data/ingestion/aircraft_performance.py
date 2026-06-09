@@ -120,6 +120,25 @@ class AircraftPerf:
     ff_holding_lbs_hr: float = 0.0   # holding pattern at holding_speed_kts
     holding_speed_kts: float = 0.0   # published holding speed (kts IAS)
 
+    # Configuration speed limits (kts IAS, from AFM / FCOM)
+    vfe_kts:           float = 0.0   # max flap/slat extended speed (landing config)
+    vle_kts:           float = 0.0   # max gear extended speed  (0 = fixed gear)
+    vlo_kts:           float = 0.0   # max gear operating speed (retract/extend)
+    va_kts:            float = 0.0   # design maneuvering speed at MTOW
+
+    # Glide performance (engine-out, ISA, typical landing weight)
+    best_glide_kts:    float = 0.0   # IAS for max L/D glide
+    glide_ratio:       float = 0.0   # L/D ratio (dimensionless)
+
+    # Approach & landing
+    vref_kts:          float = 0.0   # reference approach speed at typical landing weight
+    max_crosswind_kts: float = 0.0   # max demonstrated crosswind component
+
+    # EGT overtemperature limits (°C, approximate; vary by engine variant)
+    egt_limit_toga_c:    float = 950.0   # max EGT at TOGA
+    egt_limit_climb_c:   float = 925.0   # max EGT at CLB thrust
+    egt_limit_cruise_c:  float = 890.0   # max EGT in cruise
+
     # Computed V-speeds (filled by compute_vspeeds)
     v1_kts:  float = 0.0
     vr_kts:  float = 0.0
@@ -202,6 +221,18 @@ _DB: dict[str, AircraftPerf] = {
         ff_taxi_lbs_hr=12.0,      # 2 US gph (warm idle)
         ff_holding_lbs_hr=30.0,   # 5 US gph (best-endurance power)
         holding_speed_kts=80.0,
+        # POH Section 2 speed limits & performance
+        vfe_kts=85.0,             # 10° flap VFE (POH p.2-4)
+        vle_kts=0.0,              # fixed gear — not applicable
+        vlo_kts=0.0,
+        va_kts=97.0,              # Va at 2400 lbs (POH p.2-4)
+        best_glide_kts=73.0,      # Vx/Vy compromise best glide (POH p.3-11)
+        glide_ratio=9.0,          # ~1.5 nm per 1000 ft
+        vref_kts=65.0,            # 1.3 × Vso ≈ 65 kts
+        max_crosswind_kts=15.0,
+        egt_limit_toga_c=1500.0,  # piston CHT proxy (°F / °C scaling differs)
+        egt_limit_climb_c=1400.0,
+        egt_limit_cruise_c=1350.0,
     ),
 
     "A320": AircraftPerf(
@@ -239,6 +270,15 @@ _DB: dict[str, AircraftPerf] = {
         ff_taxi_lbs_hr=300.0,
         ff_holding_lbs_hr=1800.0,  # 210 kt holding
         holding_speed_kts=210.0,
+        # FCOM 1.02 / 1.27 speed limits & performance
+        vfe_kts=185.0,            # CONF FULL (35°) VFE
+        vle_kts=280.0,
+        vlo_kts=250.0,
+        va_kts=220.0,
+        best_glide_kts=200.0,
+        glide_ratio=17.0,         # ~17:1 clean, ~100 nm from FL350
+        vref_kts=137.0,           # typical at ~60 t landing weight
+        max_crosswind_kts=38.0,
     ),
 
     "737": AircraftPerf(
@@ -276,6 +316,14 @@ _DB: dict[str, AircraftPerf] = {
         ff_taxi_lbs_hr=320.0,
         ff_holding_lbs_hr=1900.0,
         holding_speed_kts=210.0,
+        vfe_kts=162.0,            # flaps 40° VFE (737 FCTM)
+        vle_kts=270.0,
+        vlo_kts=235.0,
+        va_kts=250.0,
+        best_glide_kts=190.0,
+        glide_ratio=17.0,
+        vref_kts=133.0,
+        max_crosswind_kts=33.0,
     ),
 
     "A330-223": AircraftPerf(
@@ -313,6 +361,14 @@ _DB: dict[str, AircraftPerf] = {
         ff_taxi_lbs_hr=500.0,
         ff_holding_lbs_hr=3000.0,
         holding_speed_kts=220.0,
+        vfe_kts=180.0,
+        vle_kts=250.0,
+        vlo_kts=250.0,
+        va_kts=226.0,
+        best_glide_kts=210.0,
+        glide_ratio=18.0,
+        vref_kts=145.0,
+        max_crosswind_kts=38.0,
     ),
 
     "787-8": AircraftPerf(
@@ -350,6 +406,14 @@ _DB: dict[str, AircraftPerf] = {
         ff_taxi_lbs_hr=400.0,
         ff_holding_lbs_hr=2200.0,
         holding_speed_kts=220.0,
+        vfe_kts=180.0,
+        vle_kts=270.0,
+        vlo_kts=270.0,
+        va_kts=230.0,
+        best_glide_kts=220.0,
+        glide_ratio=19.0,
+        vref_kts=148.0,
+        max_crosswind_kts=38.0,
     ),
 
     "B747": AircraftPerf(
@@ -387,6 +451,14 @@ _DB: dict[str, AircraftPerf] = {
         ff_taxi_lbs_hr=400.0,
         ff_holding_lbs_hr=2200.0,
         holding_speed_kts=230.0,
+        vfe_kts=174.0,
+        vle_kts=270.0,
+        vlo_kts=250.0,
+        va_kts=280.0,
+        best_glide_kts=220.0,
+        glide_ratio=16.0,
+        vref_kts=150.0,
+        max_crosswind_kts=35.0,
     ),
 
     "C130": AircraftPerf(
@@ -424,6 +496,14 @@ _DB: dict[str, AircraftPerf] = {
         ff_taxi_lbs_hr=300.0,
         ff_holding_lbs_hr=800.0,
         holding_speed_kts=150.0,
+        vfe_kts=150.0,
+        vle_kts=195.0,
+        vlo_kts=175.0,
+        va_kts=200.0,
+        best_glide_kts=150.0,
+        glide_ratio=15.0,
+        vref_kts=110.0,
+        max_crosswind_kts=25.0,
     ),
 }
 

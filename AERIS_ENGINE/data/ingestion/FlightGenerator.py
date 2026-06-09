@@ -245,6 +245,17 @@ class FlightGenerator:
         self.qnh_hpa       = round(random.uniform(990.0, 1033.0), 1)
         self._atm          = _atm_mod.Atmosphere() if _ADRPY else None
 
+        # ── Altimeter baro settings (what crew dialled in) ────────────
+        # 85% chance crew set the correct QNH; 15% chance they have a stale
+        # QNH from the previous sector (realistic human error for training data).
+        if random.random() < 0.15:
+            stale_error = random.uniform(5.0, 25.0) * random.choice([-1, 1])
+            self.baro_captain_hpa = round(clamp(self.qnh_hpa + stale_error, 960.0, 1050.0), 1)
+            self.baro_fo_hpa      = round(clamp(self.qnh_hpa + stale_error * random.uniform(0.5, 1.5), 960.0, 1050.0), 1)
+        else:
+            self.baro_captain_hpa = self.qnh_hpa
+            self.baro_fo_hpa      = self.qnh_hpa
+
         # ── Wind (constant direction/speed, held throughout) ──────────
         self.wind_dir      = round(random.uniform(0, 359))
         self.wind_spd_kts  = round(random.uniform(0, 30), 1)
@@ -900,11 +911,13 @@ class FlightGenerator:
             "track_deg":       round(track_deg, 1),
 
             # ── Atmosphere ──────────────────────────────────────────
-            "oat_c":           round(oat_c, 1),
-            "tat_c":           round(tat_c, 1),
-            "qnh_hpa":         self.qnh_hpa,
-            "pressure_alt_ft": round(pres_alt),
-            "density_alt_ft":  round(dens_alt),
+            "oat_c":                  round(oat_c, 1),
+            "tat_c":                  round(tat_c, 1),
+            "qnh_hpa":                self.qnh_hpa,
+            "pressure_alt_ft":        round(pres_alt),
+            "density_alt_ft":         round(dens_alt),
+            "baro_setting_captain_hpa": self.baro_captain_hpa,
+            "baro_setting_fo_hpa":    self.baro_fo_hpa,
 
             # ── Wind ────────────────────────────────────────────────
             "wind_dir_deg":    self.wind_dir,
@@ -969,6 +982,19 @@ class FlightGenerator:
             "vr_kts":          p.vr_kts,
             "v2_kts":          p.v2_kts,
             "vs_kias":         vs_kias,
+            "vref_kts":        p.vref_kts,
+            "best_glide_kts":  p.best_glide_kts,
+
+            # ── Navigation aids ──────────────────────────────────────
+            "dist_to_dest_nm": round(
+                haversine_nm(self.lat, self.lon, self.dest["lat"], self.dest["lon"]), 1
+            ),
+
+            # ── Fuel reserves summary ────────────────────────────────
+            "fuel_reserve_min_lbs": round(
+                self.fuel_plan.get("alternate_fuel_lbs", 0.0) +
+                self.fuel_plan.get("final_reserve_lbs",  0.0), 1
+            ),
         }
 
         if self.emergency_fn:
