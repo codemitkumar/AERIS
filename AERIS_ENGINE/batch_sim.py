@@ -36,9 +36,9 @@ Usage
 
 Examples
 --------
-    python batch_sim.py A320 100        # 100 sims, all cores
-    python batch_sim.py A320 100 4      # 100 sims, 4 cores
-    python batch_sim.py 737 500         # large dataset run
+    python batch_sim.py A320 100        
+    python batch_sim.py A320 100 4      
+    python batch_sim.py 737 500 
 """
 
 import json
@@ -48,8 +48,7 @@ import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-AIRPORT_CSV = os.path.join(BASE_DIR, "airports.csv")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 AUTO_INJECT_PROBABILITY = 0.1   # 10 % chance per simulation
 
@@ -59,20 +58,19 @@ AUTO_INJECT_PROBABILITY = 0.1   # 10 % chance per simulation
 def _run_worker(args: tuple) -> tuple:
     """Executed in a separate process — imports are fresh per worker.
 
-    args = (perf, sim_index, airport_csv, batch_ts, model)
+    args = (perf, sim_index, batch_ts, model)
     Returns (sim_index, output_dict, injected_summary, elapsed_s)
     """
-    # Imports inside the function are fine — each subprocess re-imports them.
     from data.ingestion.FlightGenerator      import FlightGenerator, Phase
     from emergencyInjector.injection_manager import InjectionManager
 
-    perf, sim_index, airport_csv, batch_ts, model = args
+    perf, sim_index, batch_ts, model = args
     t0 = time.perf_counter()
 
     manager = InjectionManager()
     manager.configure_auto_inject(probability=AUTO_INJECT_PROBABILITY)
 
-    gen = FlightGenerator(perf, airport_csv, dt=1 / 30, emergency_fn=manager)
+    gen = FlightGenerator(perf, dt=1 / 30, emergency_fn=manager)
 
     records = []
     while gen.phase != Phase.COMPLETE:
@@ -175,7 +173,7 @@ def run_batch(model: str, count: int = 100, workers: int | None = None) -> None:
 
     # Build args for every simulation upfront
     all_args = [
-        (perf, sim_index, AIRPORT_CSV, batch_ts, model)
+        (perf, sim_index, batch_ts, model)
         for sim_index in range(start_idx, start_idx + count)
     ]
 

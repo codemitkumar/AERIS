@@ -1,3 +1,10 @@
 __pycache__/
 *.py[cod]
 *.pyo
+
+# FAA NASR airport data — obtain from https://www.faa.gov/air_traffic/flight_info/aeronav/aero_data/NASR_Subscription/
+*.csv
+*.pdf
+
+# Generated simulation datasets
+AERIS_ENGINE/simulationdata/
