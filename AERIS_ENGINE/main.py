@@ -34,8 +34,7 @@ from core.data_bus                        import DataBus
 from modules.registry                     import register_all
 from emergencyInjector.injection_manager  import InjectionManager
 
-BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-AIRPORT_CSV = os.path.join(BASE_DIR, "airports.csv")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 _IAS_DISAGREE_KTS   = 5.0
 _ALT_DISAGREE_FT    = 200.0
@@ -312,7 +311,7 @@ async def async_main(model: str):
     else:
         print("[AERIS] Auto-inject rolled clean — no automatic fault this flight")
 
-    gen = FlightGenerator(perf, AIRPORT_CSV, dt=1/30, emergency_fn=manager)
+    gen = FlightGenerator(perf, dt=1/30, emergency_fn=manager)
     ws  = WebSocketServer(host="0.0.0.0", port=8765)
     bus = DataBus()
     register_all(bus, ws=ws, perf=perf)

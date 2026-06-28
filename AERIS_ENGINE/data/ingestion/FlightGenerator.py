@@ -135,7 +135,7 @@ _CRITICAL_PHASES = frozenset({
 # ─────────────────────────────────────────────
 class FlightGenerator:
 
-    def __init__(self, perf, airport_csv, dt=1/30, emergency_fn=None):
+    def __init__(self, perf, airport_csv=None, dt=1/30, emergency_fn=None):
         self.perf         = perf
         self.dt           = dt
         self.emergency_fn = emergency_fn
@@ -281,7 +281,11 @@ class FlightGenerator:
         }
 
     # ── Airport helpers ────────────────────────────────────────────────
-    def _load_airports(self, path):
+    def _load_airports(self, path=None):
+        if path is None:
+            from data.ingestion.faa_airport_loader import load_airports
+            return load_airports()
+        # Legacy fallback: OurAirports-format CSV
         airports = []
         with open(path, encoding="utf-8", errors="replace") as f:
             for r in csv.DictReader(f):
@@ -1006,8 +1010,8 @@ class FlightGenerator:
 # ─────────────────────────────────────────────
 # Standalone runner (not used by main.py)
 # ─────────────────────────────────────────────
-async def run_simulation(perf, airport_csv):
-    gen        = FlightGenerator(perf, airport_csv)
+async def run_simulation(perf):
+    gen        = FlightGenerator(perf)
     start_time = int(time.time())
     gen.meta["start_time"] = start_time
 
