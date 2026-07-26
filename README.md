@@ -1,4 +1,4 @@
-# AERIS — Aviation Emergency Response Intelligence System
+# AERIS, Aviation Emergency Response Intelligence System
 
 ## Abstract
 
@@ -10,9 +10,9 @@ The architecture is organised into four successive layers: deterministic real-ti
 
 ## 1. Research Motivation
 
-Modern commercial aircraft have achieved extraordinary levels of mechanical reliability. However, incident and accident data consistently identify crew decision-making under high workload — particularly in non-normal situations — as a primary causal or contributing factor. The problem is not a lack of information but an excess of it: when multiple systems degrade simultaneously, the crew must simultaneously diagnose failures, consult non-linear checklist sequences, assess diversion feasibility, and manage the aircraft, all against an acute time constraint.
+Modern commercial aircraft have achieved extraordinary levels of mechanical reliability. However, incident and accident data consistently identify crew decision-making under high workload, particularly in non-normal situations, as a primary causal or contributing factor. The problem is not a lack of information but an excess of it: when multiple systems degrade simultaneously, the crew must simultaneously diagnose failures, consult non-linear checklist sequences, assess diversion feasibility, and manage the aircraft, all against an acute time constraint.
 
-Existing avionics advisories (ECAM, EICAS, GPWS) are reactive and singular — they detect and annunciate individual events in isolation. They do not aggregate across systems, they do not assess the combined operability of the aircraft, and they do not reason about whether the available diversion airports are actually reachable and suitable given the aircraft's degraded state.
+Existing avionics advisories (ECAM, EICAS, GPWS) are reactive and singular, they detect and annunciate individual events in isolation. They do not aggregate across systems, they do not assess the combined operability of the aircraft, and they do not reason about whether the available diversion airports are actually reachable and suitable given the aircraft's degraded state.
 
 AERIS addresses this gap by introducing an intelligent intermediary between raw sensor data and the crew, capable of holistic situational assessment and structured recommendation generation.
 
@@ -24,19 +24,19 @@ AERIS is structured as a four-layer pipeline. Each layer builds on the outputs o
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 4 — AI Reasoning & Decision Support                  │
+│  Layer 4 - AI Reasoning & Decision Support                  │
 │  Multi-failure prioritisation · Diversion recommendations   │
 │  Adaptive checklist generation                              │
 ├─────────────────────────────────────────────────────────────┤
-│  Layer 3 — Operational Airport Knowledge Base               │
+│  Layer 3 - Operational Airport Knowledge Base               │
 │  Runway suitability · Reachability · Navigation aids        │
 │  Diversion feasibility under degraded aircraft state        │
 ├─────────────────────────────────────────────────────────────┤
-│  Layer 2 — Subsystem Health Aggregation                     │
+│  Layer 2 - Subsystem Health Aggregation                     │
 │  Fault fusion · Explainable aircraft health model           │
 │  Per-subsystem confidence scores                            │
 ├─────────────────────────────────────────────────────────────┤
-│  Layer 1 — Deterministic Mathematical Monitoring            │
+│  Layer 1 - Deterministic Mathematical Monitoring            │
 │  53 independent real-time analytical modules                │
 │  30 Hz event-driven architecture · Physics-grounded alerts  │
 └─────────────────────────────────────────────────────────────┘
@@ -44,17 +44,17 @@ AERIS is structured as a four-layer pipeline. Each layer builds on the outputs o
 
 ---
 
-## 3. Layer 1 — Deterministic Mathematical Monitoring Engine
+## 3. Layer 1, Deterministic Mathematical Monitoring Engine
 
 ### 3.1 Overview
 
-The monitoring engine (`AERIS_ENGINE`) constitutes the foundational layer of the framework. It implements 53 independent physics-grounded monitoring modules that evaluate aircraft state in real time to detect conditions across ten operational domains. Each module is analytically deterministic: its alerting logic is derived from published regulatory limits, aircraft flight manual references, and ICAO standard procedures, without the use of learned models. This ensures that the outputs of Layer 1 are fully explainable and directly traceable to their causal sensor inputs — a prerequisite for the explainability requirements of Layers 2 and 4.
+The monitoring engine (`AERIS_ENGINE`) constitutes the foundational layer of the framework. It implements 53 independent physics-grounded monitoring modules that evaluate aircraft state in real time to detect conditions across ten operational domains. Each module is analytically deterministic: its alerting logic is derived from published regulatory limits, aircraft flight manual references, and ICAO standard procedures, without the use of learned models. This ensures that the outputs of Layer 1 are fully explainable and directly traceable to their causal sensor inputs, a prerequisite for the explainability requirements of Layers 2 and 4.
 
 ### 3.2 Event-Driven Architecture
 
 The engine operates as a 30 Hz discrete-time state machine. At each tick, a flat state dictionary containing all observable aircraft parameters is published to a central **DataBus** via an asynchronous publish–subscribe pattern. All monitoring modules subscribe to this bus and evaluate independently, maintaining no shared mutable state. Each module manages its own time-window buffers (typically 5–60 ticks) as required for rate-of-change or trend computations.
 
-**Alert model:** Each module maintains a `_last_alert` field and only broadcasts a notification on state change, providing inherent deduplication — no module produces repeated output during a sustained exceedance. Alerts carry structured payloads compatible with both console output and WebSocket broadcast to external clients:
+**Alert model:** Each module maintains a `_last_alert` field and only broadcasts a notification on state change, providing inherent deduplication, no module produces repeated output during a sustained exceedance. Alerts carry structured payloads compatible with both console output and WebSocket broadcast to external clients:
 
 ```json
 {
@@ -151,7 +151,7 @@ Air density at departure elevation is obtained from the **ADRpy** validated ISA 
 | ENG-2 | EGT Overtemp       | Phase-dependent EGT limits (TOGA / CLB / CRZ)                    |
 | ENG-3 | Thrust Asymmetry   | Asymmetric thrust relative to minimum control speed               |
 | ENG-4 | Engine Failure     | N1 < 20 % with throttle command > 50 %                           |
-| ENG-5 | Efficiency Trend   | 60-tick rolling fuel efficiency — degradation trend               |
+| ENG-5 | Efficiency Trend   | 60-tick rolling fuel efficiency, degradation trend               |
 | ENG-6 | Compressor Stall   | Rapid simultaneous N1 drop and EGT surge                         |
 
 #### 3.5.5 Attitude (ATT)
@@ -176,11 +176,11 @@ Air density at departure elevation is obtained from the **ADRpy** validated ISA 
 
 | ID     | Module                | Description                                                   |
 |--------|-----------------------|---------------------------------------------------------------|
-| GPWS-1 | Excessive Sink Rate   | Mode 1 — RA-scaled sink rate thresholds                      |
-| GPWS-2 | Terrain Closure       | Mode 2 — 3-tick radio altitude closure rate                  |
-| GPWS-3 | Altitude Loss Takeoff | Mode 3 — altitude loss relative to post-liftoff peak         |
-| GPWS-4 | Unsafe Configuration  | Mode 4A/4B — gear/flap below minimum safe altitude           |
-| GPWS-5 | Glideslope Below      | Mode 5 — reads shared `glideslope_dots` from state           |
+| GPWS-1 | Excessive Sink Rate   | Mode 1, RA-scaled sink rate thresholds                      |
+| GPWS-2 | Terrain Closure       | Mode 2, 3-tick radio altitude closure rate                  |
+| GPWS-3 | Altitude Loss Takeoff | Mode 3, altitude loss relative to post-liftoff peak         |
+| GPWS-4 | Unsafe Configuration  | Mode 4A/4B, gear/flap below minimum safe altitude           |
+| GPWS-5 | Glideslope Below      | Mode 5, reads shared `glideslope_dots` from state           |
 
 #### 3.5.8 Approach (APPR)
 
@@ -243,9 +243,9 @@ Generates `count` independent simulations in parallel using `ProcessPoolExecutor
 
 ---
 
-## 4. Layer 2 — Subsystem Health Aggregation *(in design)*
+## 4. Layer 2, Subsystem Health Aggregation *(in design)*
 
-Layer 2 aggregates the independent, fine-grained detections from Layer 1 into a structured and explainable **Aircraft Health Model**. Rather than presenting dozens of raw sensor alerts to the reasoning layer, Layer 2 maintains a per-subsystem health assessment — expressed as a confidence-weighted severity score — that reflects the combined state of all monitoring modules within that domain.
+Layer 2 aggregates the independent, fine-grained detections from Layer 1 into a structured and explainable **Aircraft Health Model**. Rather than presenting dozens of raw sensor alerts to the reasoning layer, Layer 2 maintains a per-subsystem health assessment, expressed as a confidence-weighted severity score, that reflects the combined state of all monitoring modules within that domain.
 
 The intended design aggregates detections across the following subsystem domains:
 
@@ -256,38 +256,38 @@ The intended design aggregates detections across the following subsystem domains
 - **Navigation / Approach** (GPWS, APPR)
 - **Fuel / Energy** (FUEL, PERF)
 
-This aggregation serves two purposes. First, it reduces the dimensionality of inputs to the AI reasoning layer from individual sensor values to a small set of meaningful subsystem health indicators. Second, and critically, it preserves explainability — each health score carries a provenance chain back to the specific module outputs that contributed to it, enabling the AI layer to generate recommendations grounded in observable evidence rather than opaque feature activations.
+This aggregation serves two purposes. First, it reduces the dimensionality of inputs to the AI reasoning layer from individual sensor values to a small set of meaningful subsystem health indicators. Second, and critically, it preserves explainability, each health score carries a provenance chain back to the specific module outputs that contributed to it, enabling the AI layer to generate recommendations grounded in observable evidence rather than opaque feature activations.
 
 ---
 
-## 5. Layer 3 — Operational Airport Knowledge Base *(in design)*
+## 5. Layer 3, Operational Airport Knowledge Base *(in design)*
 
-Layer 3 introduces structured spatial and operational reasoning about available diversion airports. The layer combines the FAA NASR airport dataset (runway length, surface type, elevation, navigation facility availability) with the aircraft's current state — position, altitude, fuel remaining, engine configuration, and landing performance constraints — to compute a ranked set of feasible diversion options.
+Layer 3 introduces structured spatial and operational reasoning about available diversion airports. The layer combines the FAA NASR airport dataset (runway length, surface type, elevation, navigation facility availability) with the aircraft's current state, position, altitude, fuel remaining, engine configuration, and landing performance constraints, to compute a ranked set of feasible diversion options.
 
 Key assessments include:
 
-- **Reachability** — can the aircraft reach the airport given current altitude, glide ratio, engine state, and winds?
-- **Runway suitability** — is the longest available runway adequate given the aircraft's landing weight, approach speed, and any degraded braking capability?
-- **Instrument approach availability** — does the airport have ILS, RNAV, or other precision approaches if weather is a factor?
-- **Operational constraints** — airport elevation (density altitude impact on degraded performance), ATC availability, emergency services classification (FAR Part 139 ARFF level)
+- **Reachability**, can the aircraft reach the airport given current altitude, glide ratio, engine state, and winds?
+- **Runway suitability**, is the longest available runway adequate given the aircraft's landing weight, approach speed, and any degraded braking capability?
+- **Instrument approach availability**, does the airport have ILS, RNAV, or other precision approaches if weather is a factor?
+- **Operational constraints**, airport elevation (density altitude impact on degraded performance), ATC availability, emergency services classification (FAR Part 139 ARFF level)
 
 The output of Layer 3 is an ordered set of candidate diversion airports with suitability scores, passed to the AI reasoning module as operational context.
 
 ---
 
-## 6. Layer 4 — AI Reasoning and Decision Support *(planned)*
+## 6. Layer 4, AI Reasoning and Decision Support *(planned)*
 
 Layer 4 is the primary crew-facing advisory component. It receives the integrated aircraft health model from Layer 2 and the airport suitability assessment from Layer 3, and produces structured recommendations addressed to the crew.
 
 The intended capabilities of this layer include:
 
-**Emergency prioritisation** — in multi-failure scenarios, determining which system degradation poses the most immediate flight safety risk and sequencing crew attention accordingly, drawing on the combined health model rather than individual alarm priority.
+**Emergency prioritisation**, in multi-failure scenarios, determining which system degradation poses the most immediate flight safety risk and sequencing crew attention accordingly, drawing on the combined health model rather than individual alarm priority.
 
-**Diversion strategy recommendation** — selecting and presenting the most suitable diversion airport with supporting rationale (distance, runway, available approaches, ARFF capability), updated continuously as aircraft state evolves.
+**Diversion strategy recommendation**, selecting and presenting the most suitable diversion airport with supporting rationale (distance, runway, available approaches, ARFF capability), updated continuously as aircraft state evolves.
 
-**Adaptive checklist generation** — in scenarios involving simultaneous failures where existing QRH/ECAM procedures are insufficient or conflicting, generating a synthesised abnormal procedure that accounts for the combined failure state rather than addressing each failure in isolation.
+**Adaptive checklist generation**, in scenarios involving simultaneous failures where existing QRH/ECAM procedures are insufficient or conflicting, generating a synthesised abnormal procedure that accounts for the combined failure state rather than addressing each failure in isolation.
 
-**Crew workload awareness** — modulating recommendation frequency and verbosity based on assessed phase criticality, suppressing lower-priority advisories during high-workload segments (e.g., during an active go-around) and surfacing them when cognitive capacity is available.
+**Crew workload awareness**, modulating recommendation frequency and verbosity based on assessed phase criticality, suppressing lower-priority advisories during high-workload segments (e.g., during an active go-around) and surfacing them when cognitive capacity is available.
 
 The AI module is intended to be designed with explainability as a first-order requirement: every recommendation must be traceable to specific sensor values, module outputs, and decision rules, so that the crew can assess and override the recommendation with full situational understanding.
 
@@ -301,9 +301,9 @@ Airport and runway data are sourced from the **Federal Aviation Administration (
 
 | File              | Records   | Description                                          |
 |-------------------|-----------|------------------------------------------------------|
-| `APT_BASE.csv`    | ~20,000   | Airport master record — identity, location, operations |
-| `APT_RWY.csv`     | ~23,000   | Runway geometry — length, width, surface type        |
-| `APT_RWY_END.csv` | —         | Runway-end data — ILS type, TODA, LDA                |
+| `APT_BASE.csv`    | ~20,000   | Airport master record, identity, location, operations |
+| `APT_RWY.csv`     | ~23,000   | Runway geometry, length, width, surface type        |
+| `APT_RWY_END.csv` |,         | Runway-end data, ILS type, TODA, LDA                |
 
 NASR data is published and maintained by the FAA and is freely available at:
 **https://www.faa.gov/air_traffic/flight_info/aeronav/aero_data/NASR_Subscription/**
@@ -341,17 +341,17 @@ Transport-category aircraft are constrained to `large_airport` and `medium_airpo
 
 ```
 AERIS/
-├── AERIS_ENGINE/                   — Layer 1: monitoring and simulation engine
+├── AERIS_ENGINE/                  , Layer 1: monitoring and simulation engine
 │   ├── core/
-│   │   └── data_bus.py             — async pub/sub event bus
+│   │   └── data_bus.py            , async pub/sub event bus
 │   ├── data/
 │   │   └── ingestion/
-│   │       ├── FlightGenerator.py  — 30 Hz flight state machine
+│   │       ├── FlightGenerator.py , 30 Hz flight state machine
 │   │       ├── aircraft_performance.py
 │   │       └── faa_airport_loader.py
-│   ├── emergencyInjector/          — fault injection framework
+│   ├── emergencyInjector/         , fault injection framework
 │   ├── modules/
-│   │   └── math/                   — 53 analytical monitoring modules
+│   │   └── math/                  , 53 analytical monitoring modules
 │   │       ├── altimeter_setting.py
 │   │       ├── speed/
 │   │       ├── glide/
@@ -364,12 +364,12 @@ AERIS/
 │   │       ├── fuel/
 │   │       └── performance/
 │   ├── utils/
-│   │   ├── APT_BASE.csv            — FAA NASR (not distributed, obtain from FAA)
-│   │   ├── APT_RWY.csv             — FAA NASR (not distributed, obtain from FAA)
-│   │   └── APT_RWY_END.csv         — FAA NASR (not distributed, obtain from FAA)
-│   ├── simulationdata/             — generated dataset output
-│   ├── main.py                     — interactive single-flight runner
-│   └── batch_sim.py                — parallel batch dataset generator
+│   │   ├── APT_BASE.csv           , FAA NASR (not distributed, obtain from FAA)
+│   │   ├── APT_RWY.csv            , FAA NASR (not distributed, obtain from FAA)
+│   │   └── APT_RWY_END.csv        , FAA NASR (not distributed, obtain from FAA)
+│   ├── simulationdata/            , generated dataset output
+│   ├── main.py                    , interactive single-flight runner
+│   └── batch_sim.py               , parallel batch dataset generator
 └── README.md
 ```
 
