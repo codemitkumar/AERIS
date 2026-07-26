@@ -61,8 +61,12 @@ def _run_worker(args: tuple) -> tuple:
     args = (perf, sim_index, batch_ts, model)
     Returns (sim_index, output_dict, injected_summary, elapsed_s)
     """
+    import asyncio
     from data.ingestion.FlightGenerator      import FlightGenerator, Phase
     from emergencyInjector.injection_manager import InjectionManager
+    from core.data_bus                       import DataBus
+    from core.alert_tracker                  import AlertTracker
+    from modules.registry                    import register_all
 
     perf, sim_index, batch_ts, model = args
     t0 = time.perf_counter()
@@ -70,13 +74,23 @@ def _run_worker(args: tuple) -> tuple:
     manager = InjectionManager()
     manager.configure_auto_inject(probability=AUTO_INJECT_PROBABILITY)
 
-    gen = FlightGenerator(perf, dt=1 / 30, emergency_fn=manager)
+    async def _simulate():
+        bus     = DataBus()
+        tracker = AlertTracker()        # no ws — batch mode, no broadcast
+        register_all(bus, ws=tracker, perf=perf)
 
-    records = []
-    while gen.phase != Phase.COMPLETE:
-        state = gen.step()
-        if gen.should_log():
-            records.append(state)
+        gen = FlightGenerator(perf, dt=1 / 30, emergency_fn=manager)
+        records = []
+
+        while gen.phase != Phase.COMPLETE:
+            state = gen.step()
+            await bus.publish(state)    # runs all 53 modules + health assessment
+            if gen.should_log():
+                records.append(dict(state))   # state now contains "assessment"
+
+        return gen, records
+
+    gen, records = asyncio.run(_simulate())
 
     apt = lambda a: a.get("iata") or a.get("icao") or "UNKN"
     hrs = gen.route_distance_nm / gen._cruise_speed if gen._cruise_speed > 0 else 0

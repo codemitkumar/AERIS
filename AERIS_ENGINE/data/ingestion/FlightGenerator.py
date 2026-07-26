@@ -193,12 +193,25 @@ class FlightGenerator:
         self.lat = self.origin["lat"]
         self.lon = self.origin["lon"]
 
+        # ── Wind (constant direction/speed, held throughout) ──────────
+        self.wind_dir      = round(random.uniform(0, 359))
+        self.wind_spd_kts  = round(random.uniform(0, 30), 1)
+
         self.target_heading = bearing(
             self.lat, self.lon, self.dest["lat"], self.dest["lon"]
         )
-        self.departure_heading    = random.choice(range(0, 360, 10)) * 1.0
+
+        # Depart on the origin's active (into-wind) runway heading when
+        # real runway data is available; fall back to a random heading.
+        dep = self._pick_runway_heading(self.origin, self.wind_dir)
+        self.departure_heading    = dep["heading"] if dep else random.choice(range(0, 360, 10)) * 1.0
         self._initial_turn_done   = False
         self.heading              = self.departure_heading
+
+        # Align to the destination's active runway heading before landing;
+        # fall back to holding the direct route bearing.
+        land = self._pick_runway_heading(self.dest, self.wind_dir)
+        self.landing_heading      = land["heading"] if land else self.target_heading
 
         self.cruise_alt = min(perf.cruise_alt_ft, 30000)
         if perf.model == "c172p":
@@ -256,10 +269,6 @@ class FlightGenerator:
             self.baro_captain_hpa = self.qnh_hpa
             self.baro_fo_hpa      = self.qnh_hpa
 
-        # ── Wind (constant direction/speed, held throughout) ──────────
-        self.wind_dir      = round(random.uniform(0, 359))
-        self.wind_spd_kts  = round(random.uniform(0, 30), 1)
-
         # ── Logging cadence ───────────────────────────────────────────
         self._log_interval      = clamp(60 + (self.route_distance_nm / 5000) * 120, 60, 180)
         self._last_log_time     = -999.0
@@ -278,6 +287,8 @@ class FlightGenerator:
             "initial_fuel_lbs":  self._initial_fuel_lbs,
             "fuel_plan":         self.fuel_plan,
             "alternates":        self.alternates,
+            "departure_heading": round(self.departure_heading, 1),
+            "landing_heading":   round(self.landing_heading, 1),
         }
 
     # ── Airport helpers ────────────────────────────────────────────────
@@ -337,6 +348,21 @@ class FlightGenerator:
             dist = haversine_nm(origin["lat"], origin["lon"], dest["lat"], dest["lon"])
 
         return origin, dest, dist
+
+    # ── Active runway selection ─────────────────────────────────────────
+    def _pick_runway_heading(self, airport, wind_dir):
+        """Pick the airport's longest runway, then the end facing most into
+        the wind (real aircraft take off/land into the wind). Returns
+        {"heading", "runway_id", "end_id"} or None if no runway data."""
+        runways = airport.get("runways") or []
+        if not runways:
+            return None
+        longest = max(runways, key=lambda r: r.get("length_ft", 0))
+        ends = [e for e in longest.get("ends", []) if e.get("heading_true") is not None]
+        if not ends:
+            return None
+        best = min(ends, key=lambda e: abs((e["heading_true"] - wind_dir + 180) % 360 - 180))
+        return {"heading": best["heading_true"], "runway_id": longest["id"], "end_id": best["id"]}
 
     # ── Alternate airports ─────────────────────────────────────────────
     def _pick_alternates(self, perf):
@@ -628,7 +654,8 @@ class FlightGenerator:
             self.roll = 0.0
             return
 
-        error = (self.target_heading - self.heading + 540) % 360 - 180
+        target = self.landing_heading if self.phase == Phase.DESCENT else self.target_heading
+        error  = (target - self.heading + 540) % 360 - 180
 
         if self.phase == Phase.CLIMB and not self._initial_turn_done:
             turn_rate = clamp(error * 0.15, -3.5, 3.5)

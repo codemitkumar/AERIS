@@ -25,6 +25,7 @@ class WebSocketServer:
         self.port = port
         self.clients: set = set()
         self._cmd_handler: Optional[Callable[[dict], Awaitable[None]]] = None
+        self._last_meta: Optional[dict] = None
 
     def register_command_handler(self, handler: Callable[[dict], Awaitable[None]]):
         """Register an async function that receives inbound command dicts."""
@@ -34,6 +35,11 @@ class WebSocketServer:
         self.clients.add(websocket)
         print(f"[WS] Client connected: {websocket.remote_address}  "
               f"(total: {len(self.clients)})")
+        if self._last_meta is not None:
+            try:
+                await websocket.send(json.dumps(self._last_meta, default=str))
+            except Exception:
+                pass
         try:
             async for raw in websocket:
                 if not self._cmd_handler:
@@ -60,6 +66,13 @@ class WebSocketServer:
         for client, result in zip(clients_snapshot, results):
             if isinstance(result, Exception):
                 self.clients.discard(client)
+
+    async def broadcast_meta(self, meta: dict):
+        """Broadcast flight-identity metadata (topic: "flight_meta") and cache
+        it so clients connecting after the flight started still receive it.
+        """
+        self._last_meta = meta
+        await self.broadcast(meta)
 
     async def broadcast_alert(self, alert: dict):
         """Send an alert message to all connected clients.

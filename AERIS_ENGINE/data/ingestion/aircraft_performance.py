@@ -143,6 +143,7 @@ class AircraftPerf:
     v1_kts:  float = 0.0
     vr_kts:  float = 0.0
     v2_kts:  float = 0.0
+    vs_kts:  float = 0.0   # stall speed at TOW, takeoff flap config
 
 
 # ── V-speed calculation ───────────────────────────────────────────────────────
@@ -173,6 +174,8 @@ def compute_vspeeds(perf: AircraftPerf, airport_elev_ft: float = 0.0) -> Aircraf
         perf.v2_kts = round(1.20 * vs_kts, 1)
         perf.vr_kts = round(1.10 * vs_kts, 1)
         perf.v1_kts = round(perf.vr_kts - 5.0, 1)
+
+    perf.vs_kts = round(vs_kts, 1)
 
     return perf
 
