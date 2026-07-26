@@ -1,4 +1,5 @@
 from core.data_bus import DataBus
+from modules.assessment.aircraft_health                 import AircraftHealthModule
 from modules.math.altimeter_setting                     import AltimeterSettingModule
 from modules.math.unreliable_speed                      import UnreliableSpeedModule
 from modules.math.altimeter_cross_check                 import AltimeterCrossCheckModule
@@ -165,3 +166,6 @@ def register_all(bus: DataBus, ws=None, perf=None) -> None:
     CruiseAltitudeModule(ws=ws, perf=perf).attach(bus)       # PERF-1: cruise altitude check
     DensityAltitudeModule(ws=ws).attach(bus)                 # PERF-2: density altitude
     TakeoffPerformanceModule(ws=ws, perf=perf).attach(bus)   # PERF-3: takeoff acceleration
+
+    # ── Assessment (registered LAST — reads tracker after all modules ran) ────
+    AircraftHealthModule(ws).attach(bus)                     # Layer 2: subsystem health

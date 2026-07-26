@@ -27,11 +27,16 @@ import json
 import os
 import sys
 
+if sys.stdout.encoding is None or sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 from data.ingestion.FlightGenerator       import FlightGenerator, Phase
 from data.ingestion.aircraft_performance  import get_performance, list_models
 from communication.websocket_server       import WebSocketServer
 from core.data_bus                        import DataBus
 from modules.registry                     import register_all
+from core.alert_tracker                   import AlertTracker
 from emergencyInjector.injection_manager  import InjectionManager
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -103,7 +108,11 @@ async def flight_loop(gen: FlightGenerator, ws: WebSocketServer, log_fp, bus: Da
     _vr_logged = False
     _v2_logged = False
 
+    loop = asyncio.get_event_loop()
+
     while gen.phase != Phase.COMPLETE:
+        tick_start = loop.time()
+
         state  = gen.step()
         cross  = _cross_check(state)
         record = {**state, **cross}
@@ -129,7 +138,11 @@ async def flight_loop(gen: FlightGenerator, ws: WebSocketServer, log_fp, bus: Da
 
         await bus.publish(record)
 
-        await asyncio.sleep(gen.dt)
+        # Real-time pacing: sleep only the remainder of the tick budget
+        # so a 2-hour flight takes exactly 2 hours of wall-clock time.
+        remaining = gen.dt - (loop.time() - tick_start)
+        if remaining > 0:
+            await asyncio.sleep(remaining)
 
     print("[AERIS] Flight complete.")
 
@@ -311,10 +324,11 @@ async def async_main(model: str):
     else:
         print("[AERIS] Auto-inject rolled clean — no automatic fault this flight")
 
-    gen = FlightGenerator(perf, dt=1/30, emergency_fn=manager)
-    ws  = WebSocketServer(host="0.0.0.0", port=8765)
-    bus = DataBus()
-    register_all(bus, ws=ws, perf=perf)
+    gen     = FlightGenerator(perf, dt=1/30, emergency_fn=manager)
+    ws      = WebSocketServer(host="0.0.0.0", port=8765)
+    tracker = AlertTracker(ws)
+    bus     = DataBus()
+    register_all(bus, ws=tracker, perf=perf)
 
     import time as _time
     sim_dir  = os.path.join(BASE_DIR, "simulationdata")
@@ -331,6 +345,16 @@ async def async_main(model: str):
 
     ws_task  = asyncio.create_task(ws.start())
     cmd_task = asyncio.create_task(terminal_command_reader(manager, gen))
+
+    await ws.broadcast_meta({
+        "topic":              "flight_meta",
+        "model":              perf.name,
+        "origin_icao":        gen.origin["icao"],
+        "destination_icao":   gen.dest["icao"],
+        "route_distance_nm":  round(gen.route_distance_nm, 1),
+        "departure_heading":  round(gen.departure_heading, 1),
+        "landing_heading":    round(gen.landing_heading, 1),
+    })
 
     with open(tmp_path, "w", encoding="utf-8") as log_fp:
         await flight_loop(gen, ws, log_fp, bus)

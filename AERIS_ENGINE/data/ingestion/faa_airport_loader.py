@@ -13,18 +13,32 @@ Classification rules (derived from FAA NASR field definitions):
 import csv
 from pathlib import Path
 
-_UTILS_DIR = Path(__file__).resolve().parent.parent.parent / "utils"
-_BASE_CSV  = _UTILS_DIR / "APT_BASE.csv"
-_RWY_CSV   = _UTILS_DIR / "APT_RWY.csv"
+_UTILS_DIR   = Path(__file__).resolve().parent.parent.parent / "utils"
+_BASE_CSV    = _UTILS_DIR / "APT_BASE.csv"
+_RWY_CSV     = _UTILS_DIR / "APT_RWY.csv"
+_RWY_END_CSV = _UTILS_DIR / "APT_RWY_END.csv"
 
 _cache: list[dict] | None = None
 
 
-def _int(val: str, default: int = 0) -> int:
+def _float(val: str):
     try:
-        return int(str(val).strip()) if val and str(val).strip() else default
+        return round(float(val), 5) if val and str(val).strip() else None
     except ValueError:
+        return None
+
+
+def _int(val: str, default: int = 0) -> int:
+    if not val or not str(val).strip():
         return default
+    try:
+        return int(str(val).strip())
+    except ValueError:
+        # Some numeric NASR fields (e.g. ELEV) are decimal strings ("463.1").
+        try:
+            return round(float(str(val).strip()))
+        except ValueError:
+            return default
 
 
 def _has_jet_fuel(fuel_types: str) -> bool:
@@ -48,6 +62,58 @@ def _build_rwy_index(path: Path) -> dict[str, tuple[int, bool]]:
     return idx
 
 
+def _build_runway_ends(path: Path) -> dict:
+    """Return {(arpt_id, rwy_id): {rwy_end_id: {id, heading_true, lat, lon, elev_ft}}}."""
+    ends: dict = {}
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for row in csv.DictReader(f):
+            aid = row.get("ARPT_ID", "").strip()
+            rid = row.get("RWY_ID", "").strip()
+            eid = row.get("RWY_END_ID", "").strip()
+            if not aid or not rid or not eid:
+                continue
+
+            lat = _float(row.get("LAT_DECIMAL", ""))
+            lon = _float(row.get("LONG_DECIMAL", ""))
+            if lat is None or lon is None:
+                continue
+
+            ends.setdefault((aid, rid), {})[eid] = {
+                "id":           eid,
+                "heading_true": _float(row.get("TRUE_ALIGNMENT", "")),
+                "lat":          lat,
+                "lon":          lon,
+                "elev_ft":      _float(row.get("RWY_END_ELEV", "")),
+            }
+    return ends
+
+
+def _build_runways(rwy_path: Path, rwy_end_path: Path) -> dict:
+    """Return {arpt_id: [runway dicts]} joining APT_RWY.csv + APT_RWY_END.csv."""
+    rwy_ends = _build_runway_ends(rwy_end_path)
+    runways: dict = {}
+    with open(rwy_path, encoding="utf-8", errors="replace") as f:
+        for row in csv.DictReader(f):
+            aid = row.get("ARPT_ID", "").strip()
+            rid = row.get("RWY_ID", "").strip()
+            if not aid or not rid:
+                continue
+
+            ends_map = rwy_ends.get((aid, rid), {})
+            if len(ends_map) < 2:
+                # Need both ends to know the runway's true orientation.
+                continue
+
+            runways.setdefault(aid, []).append({
+                "id":        rid,
+                "length_ft": _int(row.get("RWY_LEN", "")),
+                "width_ft":  _int(row.get("RWY_WIDTH", "")),
+                "surface":   row.get("SURFACE_TYPE_CODE", "").strip(),
+                "ends":      list(ends_map.values()),
+            })
+    return runways
+
+
 def load_airports() -> list[dict]:
     """Load and classify all public operational US airports.
 
@@ -56,13 +122,18 @@ def load_airports() -> list[dict]:
 
     Returns a list of dicts with keys:
       lat, lon, icao, iata, name, city, state, elev_ft,
-      airport_type, max_rwy_ft, scheduled
+      airport_type, max_rwy_ft, scheduled, runways
+
+    `runways` is a list of {id, length_ft, width_ft, surface, ends: [...]}
+    dicts (each end has {id, heading_true, lat, lon, elev_ft}); empty list
+    if no runway geometry could be joined for that airport.
     """
     global _cache
     if _cache is not None:
         return _cache
 
-    rwy_idx = _build_rwy_index(_RWY_CSV)
+    rwy_idx  = _build_rwy_index(_RWY_CSV)
+    runways_by_apt = _build_runways(_RWY_CSV, _RWY_END_CSV)
     result: list[dict] = []
 
     with open(_BASE_CSV, encoding="utf-8", errors="replace") as f:
@@ -116,6 +187,7 @@ def load_airports() -> list[dict]:
                 "airport_type": atype,
                 "max_rwy_ft":   max_rwy,
                 "scheduled":    commercial > 0 or commuter > 0,
+                "runways":      runways_by_apt.get(aid, []),
             })
 
     _cache = result
