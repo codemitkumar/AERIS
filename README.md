@@ -25,12 +25,12 @@ AERIS is structured as a four-layer pipeline. Each layer builds on the outputs o
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Layer 4 - AI Reasoning & Decision Support                  │
-│  Multi-failure prioritisation · Diversion recommendations   │
+│  Multi-failure prioritisation · Learned severity classification │
 │  Adaptive checklist generation                              │
 ├─────────────────────────────────────────────────────────────┤
-│  Layer 3 - Operational Airport Knowledge Base               │
-│  Runway suitability · Reachability · Navigation aids        │
-│  Diversion feasibility under degraded aircraft state        │
+│  Layer 3 - Operational Airport Knowledge Base (GRACE)        │
+│  Runway suitability · Reachability · Turn feasibility        │
+│  Severity-weighted multi-factor diversion ranking            │
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 2 - Subsystem Health Aggregation                     │
 │  Fault fusion · Explainable aircraft health model           │
@@ -260,18 +260,77 @@ This aggregation serves two purposes. First, it reduces the dimensionality of in
 
 ---
 
-## 5. Layer 3, Operational Airport Knowledge Base *(in design)*
+## 5. Layer 3, Operational Airport Knowledge Base,  GRACE *(deterministic baseline implemented)*
 
-Layer 3 introduces structured spatial and operational reasoning about available diversion airports. The layer combines the FAA NASR airport dataset (runway length, surface type, elevation, navigation facility availability) with the aircraft's current state, position, altitude, fuel remaining, engine configuration, and landing performance constraints, to compute a ranked set of feasible diversion options.
+### 5.1 Overview
 
-Key assessments include:
+Layer 3 introduces structured spatial and operational reasoning about available diversion airports. It is implemented as **GRACE,  a Graceful-Relaxation Algorithm for aircraft Emergency Navigation** (`AERIS_ENGINE/decision/diversion_selector.py`), a deterministic, dependency-free ranking engine that combines the FAA NASR airport dataset (runway geometry, classification, NOTAM status) with the aircraft's live state, position, heading, fuel remaining, and an emergency severity tier, to compute an ordered set of feasible diversion candidates.
 
-- **Reachability**, can the aircraft reach the airport given current altitude, glide ratio, engine state, and winds?
-- **Runway suitability**, is the longest available runway adequate given the aircraft's landing weight, approach speed, and any degraded braking capability?
-- **Instrument approach availability**, does the airport have ILS, RNAV, or other precision approaches if weather is a factor?
-- **Operational constraints**, airport elevation (density altitude impact on degraded performance), ATC availability, emergency services classification (FAR Part 139 ARFF level)
+GRACE is registered on the DataBus as `DiversionDecisionModule` (`AERIS_ENGINE/decision/decision_engine.py`), placed immediately after the Layer 2 aggregator in the subscriber chain (`AERIS_ENGINE/modules/registry.py`) so it consumes the fresh `state["assessment"]` output within the same simulation tick, satisfying the layered dependency shown in Section 2. Its output is published to `state["diversion_recommendation"]` and, when active, rendered live on the AERIS_UI simulate-map screen as ranked overlay markers and a candidate list.
 
-The output of Layer 3 is an ordered set of candidate diversion airports with suitability scores, passed to the AI reasoning module as operational context.
+### 5.2 Constraint Model
+
+GRACE separates every consideration into one of two categories, a distinction that is load-bearing to the algorithm's safety behaviour (Section 5.5):
+
+| Category | Examples | Behaviour |
+|---|---|---|
+| **Physical facts** | NOTAM airport/runway closures; minimum landable runway length | Absolute exclusion. Never relaxed, at any severity or degradation tier. |
+| **Safety margins** | Worst-case fuel-burn multiplier; ICAO reserve buffer; turn budget | Configurable per emergency condition. Loosened only as a last resort when no candidate survives at full strictness (Section 5.5), and always disclosed in the result. |
+
+Required runway length is derived from a landing-performance heuristic (`is_transport`, `vref_kts`) and treated as a hard floor at 55 % of that requirement,  under no circumstance, including full graceful-relaxation, does GRACE recommend a runway below that floor.
+
+### 5.3 Multi-Factor Scoring
+
+Each surviving candidate is scored as a weighted sum over five factors (`fn(candidate, context) → [0, 1]`), normalised by the active severity tier's weight profile:
+
+| Factor | Signal | Formula (abbreviated) |
+|---|---|---|
+| `reachability` | Great-circle distance from current position | `exp(-distance_nm / 150)` |
+| `turn` | Heading change required to reach the airport | `1 − turn_deg / max_turn_deg` |
+| `capability` | Best usable runway length vs. required length | `clamp((best_rwy_ft / required_ft) / 1.5, 0, 1)`, +0.15 for large/medium airports under a `prefer_larger_airport` condition |
+| `fuel_margin` | Fuel remaining after worst-case burn to reach, minus reserve | `clamp(margin_lbs / fuel_total_lbs, 0, 1)` |
+| `availability` | NOTAM cleanliness (0 or partial runway closures) | `1.0` clean, `0.5` if a non-blocking runway closure exists |
+
+Severity determines which factors dominate,  a HIGH-severity emergency weights proximity and turn heavily ("get down now, nearby"); a LOW-severity one weights airport capability more ("there's time to pick a better field"):
+
+| Severity | reachability | turn | capability | fuel_margin | availability |
+|---|---|---|---|---|---|
+| `LOW` | 0.15 | 0.10 | **0.40** | 0.15 | 0.20 |
+| `MODERATE` | 0.30 | 0.20 | 0.25 | 0.15 | 0.10 |
+| `HIGH` | **0.45** | **0.30** | 0.10 | 0.10 | 0.05 |
+
+Turning also costs fuel and time: a candidate's effective diversion distance is inflated by up to 5 % at a full 180° turn before the fuel-reachability check runs, so an aligned airport slightly farther away can outrank a closer one that requires reversing course.
+
+### 5.4 Emergency Condition Modifiers
+
+Severity alone does not capture *why* a diversion is needed. GRACE additionally consumes `active_conditions`, a list of alert IDs (the same IDs raised by the Layer 1 monitoring modules), each mapped to a set of context modifiers via an extensible registry:
+
+| Condition ID | Effect |
+|---|---|
+| `FUEL_LEAK` | 2.0× worst-case fuel-burn assumption; 1.15× reserve buffer |
+| `FUEL_EXHAUSTION` | 1.10× fuel burn; 1.25× reserve buffer |
+| `FUEL_IMBALANCE`, `THRUST_ASYM` | 1.05× fuel burn (asymmetric drag) |
+| `MIN_DIVERT_FUEL` | 1.20× reserve buffer |
+| `ENGINE_FAILURE` | 1.10× fuel burn; prefers larger/medium airports (ARFF, longer runways) |
+| `ICE_ACCUM` | 1.20× fuel burn (airframe ice drag/weight) |
+| `DIRECTIONAL_CONTROL_LOSS` *(illustrative,  not yet raised by a live module)* | Caps turn budget at 45°; prefers larger airports |
+
+This registry is the explicit integration point for Layer 4: a future learned severity classifier, or a new flight-control-failure detector, only needs to raise its alert ID and register a modifier entry,  no change to the scoring or relaxation logic in Sections 5.3 or 5.5 is required. New scoring factors and severity weight profiles are similarly pluggable via `register_factor()` and `set_severity_weights()`.
+
+### 5.5 Graceful Degradation
+
+The algorithm's namesake behaviour: if no airport survives the hard filters at full worst-case strictness, GRACE does not return an empty result. It retries at progressively looser fuel/turn margins, 
+
+```
+relaxation levels:  1.0 → 0.7 → 0.4 → 0.15 → 0.0
+                    (full worst-case)   (standard ICAO reserve, unrestricted turn)
+```
+
+stopping at the first tier that yields a candidate. Per Section 5.2, this relaxation is bounded: it only ever unwinds the *extra* worst-case safety padding back toward the standard reserve and an achievable turn, never below "reach it with a real reserve intact." Runway length and NOTAM closures are excluded from relaxation entirely. Every candidate produced under a relaxed tier carries `relaxed: true` and human-readable `relaxation_notes` (e.g. *"turn limit relaxed 45° → 128°"*), and the recommendation as a whole is flagged `degraded: true`, so a relaxed pick can never be silently mistaken for one that met full margins. If even full relaxation finds nothing reachable, GRACE reports `noReachableAirport: true` rather than fabricating an option.
+
+### 5.6 Live Integration
+
+`DiversionDecisionModule` maps the Layer 2 `overallRisk` classification (`LOW/MODERATE/HIGH/CRITICAL`, where `LOW` means no active alert) down to GRACE's three-tier severity scale, skipping computation entirely while nothing is active. Recomputation is throttled to severity changes or a 15-simulated-second interval, not every 30 Hz tick, since a full airport-dataset scan is unnecessary at that cadence. Output is JSON-serialisable and flows through the same DataBus/WebSocket path as every other module, so it appears in both the live `AERIS_UI` map (ranked diversion markers, click-to-zoom candidate list) and the batch-generated training dataset.
 
 ---
 
@@ -283,7 +342,7 @@ The intended capabilities of this layer include:
 
 **Emergency prioritisation**, in multi-failure scenarios, determining which system degradation poses the most immediate flight safety risk and sequencing crew attention accordingly, drawing on the combined health model rather than individual alarm priority.
 
-**Diversion strategy recommendation**, selecting and presenting the most suitable diversion airport with supporting rationale (distance, runway, available approaches, ARFF capability), updated continuously as aircraft state evolves.
+**Diversion strategy recommendation**, refining the severity classification and condition detection consumed by GRACE (Section 5),  the ranking, relaxation, and rationale generation are already implemented as a deterministic Layer 3 baseline; Layer 4's contribution is a learned classifier feeding GRACE's `severity`/`active_conditions` inputs in place of (or alongside) the current rule-based `overallRisk` mapping, requiring no change to the ranking algorithm itself.
 
 **Adaptive checklist generation**, in scenarios involving simultaneous failures where existing QRH/ECAM procedures are insufficient or conflicting, generating a synthesised abnormal procedure that accounts for the combined failure state rather than addressing each failure in isolation.
 
@@ -348,8 +407,13 @@ AERIS/
 │   │   └── ingestion/
 │   │       ├── FlightGenerator.py , 30 Hz flight state machine
 │   │       ├── aircraft_performance.py
-│   │       └── faa_airport_loader.py
+│   │       ├── faa_airport_loader.py
+│   │       └── notam_reader.py    , ICAO NOTAM text parser/decoder
+│   ├── decision/                  , Layer 3: GRACE diversion engine
+│   │   ├── diversion_selector.py  , GRACE algorithm (Section 5)
+│   │   └── decision_engine.py     , DataBus wiring for GRACE
 │   ├── emergencyInjector/         , fault injection framework
+│   │   └── notam/                 , randomised NOTAM airport/runway closures
 │   ├── modules/
 │   │   └── math/                  , 53 analytical monitoring modules
 │   │       ├── altimeter_setting.py

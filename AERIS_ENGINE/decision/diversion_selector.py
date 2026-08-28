@@ -1,8 +1,19 @@
-"""Diversion airport selection — plug-and-play scoring algorithm.
+"""GRACE — a Graceful-Relaxation Algorithm for Aircraft Emergency Navigation.
 
 Given the live flight state, the loaded airport dataset, and an emergency
-severity tier (LOW / MODERATE / HIGH), ranks every reachable airport and
-returns the top N diversion candidates.
+severity tier (LOW / MODERATE / HIGH), GRACE ranks every reachable airport
+and returns the top N diversion candidates: a plug-and-play scoring engine
+that finds the best divert options given where the aircraft is *right now*,
+where it can still point given its current condition, and how much fuel it
+actually has to get there.
+
+The "graceful" half of the name is the load-bearing part: when full-strictness
+worst-case assumptions leave nothing reachable, GRACE doesn't return an empty
+list — it re-tries at progressively looser fuel/turn safety margins (see
+_RELAXATION_LEVELS) until something survives, labeling every degraded result
+so a relaxed pick is never mistaken for a fully-compliant one. That grace
+has bounds, though: required runway length and NOTAM closures are never
+relaxed, at any tier — see the Modeling notes below.
 
 Designed to be extended without touching the core algorithm:
 
@@ -12,10 +23,10 @@ Designed to be extended without touching the core algorithm:
 
 Severity is expected to come from an upstream classifier — today, the
 rule-based AircraftHealthModule's `overallRisk`; tomorrow, an AI module.
-This selector only ever consumes the resulting "LOW"/"MODERATE"/"HIGH"
-string plus a list of active condition IDs (alert IDs), so swapping or
-upgrading that classifier requires no changes here — see
-decision/decision_engine.py for the current wiring.
+GRACE only ever consumes the resulting "LOW"/"MODERATE"/"HIGH" string plus
+a list of active condition IDs (alert IDs), so swapping or upgrading that
+classifier requires no changes here — see decision/decision_engine.py for
+the current wiring.
 
 Modeling notes
 ---------------
@@ -135,7 +146,7 @@ _DISTANCE_DECAY_NM      = 150.0  # exponential falloff scale for the reachabilit
 # never touched by _RELAXATION_LEVELS below.
 _MIN_LANDABLE_RATIO = 0.55
 
-# ── Graceful degradation ─────────────────────────────────────────────────────
+# ── Graceful degradation (the "G" in GRACE) ─────────────────────────────────
 # If nothing survives the hard filters at full strictness (the worst-case
 # fuel-burn/turn assumptions from the active conditions), the selector
 # doesn't just return an empty list — it retries at progressively looser
@@ -256,7 +267,8 @@ def _factor_availability(candidate, ctx):
 
 
 class DiversionSelector:
-    """Plug-and-play diversion airport ranking engine.
+    """Reference implementation of GRACE — the Graceful-Relaxation Algorithm
+    for aircraft Emergency Navigation.
 
     Not tied to any specific aircraft-state shape beyond a handful of dict
     keys (see select()) and doesn't touch the DataBus/FlightGenerator at
@@ -444,6 +456,7 @@ _default_instance: DiversionSelector | None = None
 
 
 def default_selector() -> DiversionSelector:
+    """Return the process-wide default GRACE instance (lazily constructed)."""
     global _default_instance
     if _default_instance is None:
         _default_instance = DiversionSelector()
@@ -451,5 +464,7 @@ def default_selector() -> DiversionSelector:
 
 
 def select_diversion_airports(state: dict, airports: list, **kwargs) -> list:
-    """Convenience wrapper around default_selector().select(...)."""
+    """Run GRACE via the default instance. Convenience wrapper around
+    default_selector().select(...) for callers that don't need custom
+    factors/weights/condition modifiers."""
     return default_selector().select(state, airports, **kwargs)

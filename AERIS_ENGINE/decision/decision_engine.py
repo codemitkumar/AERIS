@@ -1,17 +1,19 @@
 """Diversion Decision Engine — Layer 3 DataBus subscriber.
 
+Live wiring for GRACE (Graceful-Relaxation Algorithm for aircraft Emergency
+Navigation — see decision/diversion_selector.py for the algorithm itself).
+
 Runs after modules/assessment/aircraft_health.py (Layer 2) in the same tick,
 so it can read the fresh state["assessment"]["overallRisk"] the moment that
 module writes it (DataBus subscribers registered without internal `await`
 points run to completion in registration order — see modules/registry.py).
 
 This module owns exactly one job: turn "assessment says X" into "here are
-the top 3 diversion airports right now", by calling into
-decision.diversion_selector — a plug-and-play scoring engine that knows
-nothing about the DataBus, AlertTracker, or FlightGenerator. Swapping the
-severity classifier for a real AI model later means changing
-_RISK_TO_SEVERITY (or replacing this module's on_state entirely) — the
-selector itself needs no changes.
+the top 3 diversion airports right now", by calling into GRACE — a
+plug-and-play scoring engine that knows nothing about the DataBus,
+AlertTracker, or FlightGenerator. Swapping the severity classifier for a
+real AI model later means changing _RISK_TO_SEVERITY (or replacing this
+module's on_state entirely) — GRACE itself needs no changes.
 """
 
 from core.data_bus import DataBus
