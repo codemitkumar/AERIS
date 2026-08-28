@@ -17,7 +17,8 @@ Terminal injection commands (type while simulation is running):
     inject windshear [rate_fpm] [duration_s]     — windshear burst (auto-stops)
     inject energy [alt_fpm] [spd_kts_s]          — total energy bleed
     inject turbulence [amplitude_fpm] [freq_hz]  — turbulence / G oscillation
-    clear [ias|alt_disagree|descent|windshear|energy|turbulence]  — clear one
+    inject notam [count]                         — airport/runway closure NOTAMs
+    clear [ias|alt_disagree|descent|windshear|energy|turbulence|notam]  — clear one
     clear                                        — clear all active injectors
     status                                       — print injector states
 """
@@ -113,7 +114,13 @@ async def flight_loop(gen: FlightGenerator, ws: WebSocketServer, log_fp, bus: Da
     while gen.phase != Phase.COMPLETE:
         tick_start = loop.time()
 
-        state  = gen.step()
+        state = gen.step()
+        # Run all DataBus modules (assessment, diversion decision, ...) before
+        # building the broadcast/log record, so the keys they add to `state`
+        # (e.g. "assessment", "diversion_recommendation") actually make it
+        # into the live WS feed and the JSONL log for this tick, not just
+        # into a `record` copy that gets discarded after publish() returns.
+        await bus.publish(state)
         cross  = _cross_check(state)
         record = {**state, **cross}
 
@@ -136,8 +143,6 @@ async def flight_loop(gen: FlightGenerator, ws: WebSocketServer, log_fp, bus: Da
         if ws:
             await ws.broadcast(record)
 
-        await bus.publish(record)
-
         # Real-time pacing: sleep only the remainder of the tick budget
         # so a 2-hour flight takes exactly 2 hours of wall-clock time.
         remaining = gen.dt - (loop.time() - tick_start)
@@ -159,7 +164,8 @@ async def terminal_command_reader(manager: InjectionManager, gen: FlightGenerato
         "  inject energy [alt_fpm] [spd_kts_s]\n"
         "  inject turbulence [amplitude_fpm] [freq_hz]\n"
         "  inject fuel_leak [rate_lbs_hr] [left|right|center|all]\n"
-        "  clear [ias|alt_disagree|descent|windshear|energy|turbulence|fuel_leak]\n"
+        "  inject notam [count]\n"
+        "  clear [ias|alt_disagree|descent|windshear|energy|turbulence|fuel_leak|notam]\n"
         "  clear   (clears all)\n"
         "  status"
     )
@@ -223,6 +229,10 @@ async def terminal_command_reader(manager: InjectionManager, gen: FlightGenerato
                     tank = parts[3]        if len(parts) > 3 else "left"
                     manager.fuel_leak.start(rate_lbs_hr=rate, tank=tank)
 
+                elif fault == "notam":
+                    count = int(parts[2]) if len(parts) > 2 else None
+                    manager.notam.start(gen, count=count)
+
                 else:
                     print(f"[CMD] Unknown fault type '{fault}'")
 
@@ -237,6 +247,7 @@ async def terminal_command_reader(manager: InjectionManager, gen: FlightGenerato
                     "energy":       manager.energy,
                     "turbulence":   manager.turbulence,
                     "fuel_leak":    manager.fuel_leak,
+                    "notam":        manager.notam,
                 }
                 if target in _clear_map:
                     _clear_map[target].stop()
@@ -261,6 +272,7 @@ def _build_final_output(
     jsonl_path: str,
     sim_dir: str,
     injected_emergency: str | None = None,
+    notam_closures: list[dict] | None = None,
 ) -> str:
     """Read the temp JSONL, wrap in the final schema, write JSON, delete JSONL."""
     import time as _time
@@ -291,6 +303,17 @@ def _build_final_output(
     # Only add the key when an emergency was actually injected
     if injected_emergency:
         output["injectedEmergency"] = injected_emergency
+
+    if notam_closures:
+        output["notamClosures"] = [
+            {
+                "icao":    c["icao"],
+                "onPath":  c["on_path"],
+                "summary": c["notam"].summary,
+                "raw":     c["notam"].raw,
+            }
+            for c in notam_closures
+        ]
 
     output["simulationData"] = simulation_data
 
@@ -323,6 +346,12 @@ async def async_main(model: str):
         print("[AERIS] Auto-inject ARMED — a fault will fire during flight")
     else:
         print("[AERIS] Auto-inject rolled clean — no automatic fault this flight")
+
+    # 70 % chance this flight carries NOTAM airport/runway closures
+    if manager.configure_notam_injection(probability=0.7):
+        print("[AERIS] NOTAM injection ARMED — closures will be seeded pre-departure")
+    else:
+        print("[AERIS] NOTAM injection rolled clean — no closures this flight")
 
     gen     = FlightGenerator(perf, dt=1/30, emergency_fn=manager)
     ws      = WebSocketServer(host="0.0.0.0", port=8765)
@@ -362,11 +391,17 @@ async def async_main(model: str):
     ws_task.cancel()
     cmd_task.cancel()
 
-    final = _build_final_output(gen, tmp_path, sim_dir, manager.injected_summary)
+    final = _build_final_output(
+        gen, tmp_path, sim_dir, manager.injected_summary, manager.notam.closures,
+    )
     print(f"[AERIS] Saved → {final}")
 
     if manager.injected_summary:
         print(f"[AERIS] Injected emergencies recorded: {manager.injected_summary}")
+
+    if manager.notam.closures:
+        icaos = ", ".join(c["icao"] for c in manager.notam.closures)
+        print(f"[AERIS] NOTAM closures this flight: {icaos}")
 
 
 def main():
