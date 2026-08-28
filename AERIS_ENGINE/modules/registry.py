@@ -1,5 +1,6 @@
 from core.data_bus import DataBus
 from modules.assessment.aircraft_health                 import AircraftHealthModule
+from decision.decision_engine                            import DiversionDecisionModule
 from modules.math.altimeter_setting                     import AltimeterSettingModule
 from modules.math.unreliable_speed                      import UnreliableSpeedModule
 from modules.math.altimeter_cross_check                 import AltimeterCrossCheckModule
@@ -169,3 +170,6 @@ def register_all(bus: DataBus, ws=None, perf=None) -> None:
 
     # ── Assessment (registered LAST — reads tracker after all modules ran) ────
     AircraftHealthModule(ws).attach(bus)                     # Layer 2: subsystem health
+
+    # ── Decision (registered after Assessment — reads state["assessment"]) ────
+    DiversionDecisionModule(perf=perf, tracker=ws).attach(bus)  # Layer 3: diversion airports

@@ -34,6 +34,11 @@ const TYPE_RADIUS = {
   small_airport:  1.6,
 };
 
+// Rank 1 / 2 / 3 diversion-recommendation colors — deliberately distinct
+// from the orange planned-route line and the red NOTAM-closure markers.
+const _DIVERSION_RANK_COLORS = ["#33ff99", "#7dffb8", "#b8ffd6"];
+const _SEVERITY_COLOR = { LOW: "#ffd766", MODERATE: "#ffaa33", HIGH: "#ff5566" };
+
 const MIN_ZOOM = 0.08;
 const MAX_ZOOM = 4000;
 const LOD_ALL_DOTS   = 60;    // effScale: below this only large/medium shown
@@ -75,10 +80,14 @@ function useAirports() {
 // Radar-relevant fields only — not the full cockpit/ADC parsing App.jsx does.
 const WS_URL = "ws://localhost:8765";
 
+const EMPTY_NOTAMS = { closedAirports: new Set(), closedRunways: {}, list: [] };
+
 function useLiveFlight() {
   const [connected, setConnected] = useState(false);
   const [meta, setMeta] = useState(null);
   const [flight, setFlight] = useState(null);
+  const [notams, setNotams] = useState(EMPTY_NOTAMS);
+  const [diversion, setDiversion] = useState(null);
   const wsRef = useRef(null);
   const timerRef = useRef(null);
 
@@ -101,6 +110,8 @@ function useLiveFlight() {
           if (s.topic === "flight_meta") {
             setMeta(s);
             setFlight(null);
+            setNotams(EMPTY_NOTAMS);
+            setDiversion(null);
             return;
           }
           if (s.topic) return; // alerts etc. — not relevant to the radar view
@@ -114,6 +125,17 @@ function useLiveFlight() {
             phase: s.phase ?? "",
             time: s.time ?? 0,
           });
+          // NOTAM closures — seeded once pre-departure, republished every tick
+          if (s.notam_closed_airports || s.notam_closed_runways || s.notam_closures) {
+            setNotams({
+              closedAirports: new Set(s.notam_closed_airports || []),
+              closedRunways: s.notam_closed_runways || {},
+              list: s.notam_closures || [],
+            });
+          }
+          // Diversion recommendation — only present while an emergency is
+          // active (decision/decision_engine.py omits the key otherwise).
+          setDiversion(s.diversion_recommendation ?? null);
         } catch (_) {}
       };
     }
@@ -122,7 +144,22 @@ function useLiveFlight() {
     return () => { clearTimeout(timerRef.current); wsRef.current?.close(); };
   }, []);
 
-  return { connected, meta, flight };
+  return { connected, meta, flight, notams, diversion };
+}
+
+// ── NOTAM closure lookup ────────────────────────────────────────────────────
+// A runway-specific closure only reads as "runway closed" when the airport
+// has another runway to fall back to; with no secondary runway (or no
+// runway geometry at all) it's operationally the same as the airport being
+// closed, so it renders as a full-airport closure instead.
+const EMPTY_ARR = [];
+function closureState(airport, notams) {
+  const closedRwyIds = notams.closedRunways[airport.icao] || EMPTY_ARR;
+  const hasSecondary = airport.runways.length > 1;
+  const airportClosed =
+    notams.closedAirports.has(airport.icao) ||
+    (closedRwyIds.length > 0 && !hasSecondary);
+  return { airportClosed, closedRwyIds, hasSecondary };
 }
 
 function computeBounds(airports, predicate) {
@@ -155,7 +192,7 @@ function screenToWorld(sx, sy, view, base, w, h) {
 // ─── Main screen ────────────────────────────────────────────────────────────
 export default function SimulateMap() {
   const { airports, error } = useAirports();
-  const { connected, meta, flight } = useLiveFlight();
+  const { connected, meta, flight, notams, diversion } = useLiveFlight();
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
 
@@ -180,6 +217,11 @@ export default function SimulateMap() {
   const [selected, setSelected] = useState(null);
   const [query, setQuery] = useState("");
   const [notFound, setNotFound] = useState(false);
+
+  const selectedClosure = useMemo(
+    () => (selected ? closureState(selected, notams) : { airportClosed: false, closedRwyIds: EMPTY_ARR, hasSecondary: false }),
+    [selected, notams]
+  );
 
   const getCanvasSize = () => {
     const c = canvasRef.current;
@@ -261,24 +303,34 @@ export default function SimulateMap() {
 
       const isSel = selected && selected.icao === a.icao;
       const isHov = hovered && hovered.icao === a.icao;
+      const { airportClosed, closedRwyIds, hasSecondary } = closureState(a, notams);
 
       // Runway lines (true-scale, true-heading — projected from real endpoints)
       if (showRunways && a._runwaysProj.length) {
-        ctx.strokeStyle = isSel ? "#ffffff" : "rgba(120,200,255,0.85)";
-        ctx.lineWidth = isSel ? 2.5 : 1.5;
         for (const rwy of a._runwaysProj) {
           if (rwy._ends.length < 2) continue;
+          const isClosedRwy = hasSecondary && closedRwyIds.includes(rwy.id);
+
+          ctx.strokeStyle = isClosedRwy ? "#ff3344" : isSel ? "#ffffff" : "rgba(120,200,255,0.85)";
+          ctx.lineWidth = isClosedRwy ? 3 : isSel ? 2.5 : 1.5;
+          if (isClosedRwy) { ctx.shadowColor = "#ff3344"; ctx.shadowBlur = 8; }
+
           const p0 = worldToScreen(rwy._ends[0].x, rwy._ends[0].y, view, base, w, h);
           const p1 = worldToScreen(rwy._ends[1].x, rwy._ends[1].y, view, base, w, h);
           ctx.beginPath();
           ctx.moveTo(p0.sx, p0.sy);
           ctx.lineTo(p1.sx, p1.sy);
           ctx.stroke();
+          if (isClosedRwy) ctx.shadowBlur = 0;
+
           if (effScale >= LOD_RUNWAYS * 1.6) {
-            ctx.fillStyle = "rgba(150,210,255,0.9)";
+            ctx.fillStyle = isClosedRwy ? "#ff8899" : "rgba(150,210,255,0.9)";
             ctx.font = "10px 'Share Tech Mono', monospace";
             ctx.fillText(rwy._ends[0].id, p0.sx + 4, p0.sy - 4);
             ctx.fillText(rwy._ends[1].id, p1.sx + 4, p1.sy - 4);
+            if (isClosedRwy) {
+              ctx.fillText("CLSD", (p0.sx + p1.sx) / 2 + 4, (p0.sy + p1.sy) / 2 - 4);
+            }
           }
         }
       }
@@ -301,6 +353,24 @@ export default function SimulateMap() {
       ctx.fill();
       ctx.shadowBlur = 0;
 
+      // NOTAM airport closure — soft red shade layered above the marker
+      if (airportClosed) {
+        const shadeR = Math.max(r * 3.2, 11);
+        const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, shadeR);
+        grad.addColorStop(0, "rgba(255,40,50,0.55)");
+        grad.addColorStop(0.6, "rgba(255,40,50,0.25)");
+        grad.addColorStop(1, "rgba(255,40,50,0)");
+        ctx.beginPath();
+        ctx.arc(sx, sy, shadeR, 0, Math.PI * 2);
+        ctx.fillStyle = grad;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(sx, sy, shadeR * 0.5, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(255,70,80,0.9)";
+        ctx.lineWidth = 1.3;
+        ctx.stroke();
+      }
+
       // Elevation label (sectional-chart style boxed number)
       if (showElevLabel) {
         const label = `${Math.round(a.elev_ft)}`;
@@ -315,9 +385,9 @@ export default function SimulateMap() {
         ctx.fillText(label, sx + r + 6, sy);
 
         if (effScale >= LOD_RUNWAYS) {
-          ctx.fillStyle = "rgba(200,220,240,0.85)";
+          ctx.fillStyle = airportClosed ? "#ff5566" : "rgba(200,220,240,0.85)";
           ctx.font = "9px 'Share Tech Mono', monospace";
-          ctx.fillText(a.icao, sx - 4, sy - r - 6);
+          ctx.fillText(airportClosed ? `${a.icao} CLSD` : a.icao, sx - 4, sy - r - 6);
         }
       }
     }
@@ -337,6 +407,47 @@ export default function SimulateMap() {
 
       const acWorld = project(flight.lat, flight.lon);
       const { sx: ax, sy: ay } = worldToScreen(acWorld.x, acWorld.y, view, base, w, h);
+
+      // ── Diversion recommendation overlay ─────────────────────────────
+      // Only present in the WS feed while an emergency is active (see
+      // decision/decision_engine.py). Rank 1 gets a solid bright line and
+      // ring; ranks 2-3 get dimmer dashed lines, so the "best pick" always
+      // reads clearly even with three options on screen at once.
+      if (diversion?.candidates?.length) {
+        diversion.candidates.forEach((cand, i) => {
+          const apt = airports.find((a) => a.icao === cand.icao);
+          if (!apt) return;
+          const rank = i + 1;
+          const color = _DIVERSION_RANK_COLORS[i] || _DIVERSION_RANK_COLORS[_DIVERSION_RANK_COLORS.length - 1];
+          const { sx: dx, sy: dy } = worldToScreen(apt._x, apt._y, view, base, w, h);
+
+          ctx.save();
+          ctx.setLineDash(rank === 1 ? [] : [5, 5]);
+          ctx.strokeStyle = color;
+          ctx.globalAlpha = rank === 1 ? 0.9 : 0.5;
+          ctx.lineWidth = rank === 1 ? 2 : 1.2;
+          ctx.beginPath();
+          ctx.moveTo(ax, ay);
+          ctx.lineTo(dx, dy);
+          ctx.stroke();
+          ctx.restore();
+
+          const baseR = TYPE_RADIUS[apt.airport_type] ?? 2;
+          const ringR = baseR * 1.6 + 7 + (rank === 1 ? 2 : 0);
+          ctx.beginPath();
+          ctx.arc(dx, dy, ringR, 0, Math.PI * 2);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = rank === 1 ? 2 : 1.2;
+          ctx.shadowColor = color;
+          ctx.shadowBlur = rank === 1 ? 10 : 4;
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+
+          ctx.fillStyle = color;
+          ctx.font = rank === 1 ? "bold 11px 'Share Tech Mono', monospace" : "10px 'Share Tech Mono', monospace";
+          ctx.fillText(`#${rank}`, dx + ringR + 3, dy + 3);
+        });
+      }
 
       // Target symbol — chevron pointing along ground track (like a real radar
       // return, not the instrument/nose heading)
@@ -385,7 +496,7 @@ export default function SimulateMap() {
     ctx.fillStyle = "rgba(42,64,96,0.9)";
     ctx.font = "9px 'Share Tech Mono', monospace";
     ctx.fillText(`RENDERED ${visibleCount} / ${airports.length}`, 10, h - 10);
-  }, [airports, hovered, selected, flight, meta, originAirport, destAirport]);
+  }, [airports, hovered, selected, flight, meta, originAirport, destAirport, notams, diversion]);
 
   // ── Init base transform once airports load ─────────────────────────────
   useEffect(() => {
@@ -747,11 +858,162 @@ export default function SimulateMap() {
               <span style={{ fontSize: 9, color: "#4a7090" }}>{desc}</span>
             </div>
           ))}
+          {(notams.closedAirports.size > 0 || Object.keys(notams.closedRunways).length > 0) && (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, marginTop: 6 }}>
+                <div style={{
+                  width: 10, height: 10, borderRadius: "50%",
+                  background: "rgba(255,40,50,0.55)", border: "1px solid rgba(255,70,80,0.9)",
+                }} />
+                <span style={{ fontSize: 9, color: "#ff8899" }}>AIRPORT CLOSED (NOTAM)</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                <div style={{ width: 10, height: 2, background: "#ff3344", boxShadow: "0 0 4px #ff3344" }} />
+                <span style={{ fontSize: 9, color: "#ff8899" }}>RUNWAY CLOSED (NOTAM)</span>
+              </div>
+            </>
+          )}
           <div style={{ fontSize: 8, color: "#1a3050", marginTop: 6, lineHeight: 1.5 }}>
             SCROLL TO ZOOM · DRAG TO PAN<br />
             ELEVATION LABELS &amp; RUNWAYS<br />REVEAL AT HIGHER ZOOM
           </div>
         </div>
+
+        {/* NOTAM closures list — click a row to zoom to it */}
+        {notams.list.length > 0 && (
+          <div style={{
+            position: "absolute", right: selected ? 272 : 12, top: 12,
+            background: "rgba(6,16,26,0.9)", border, borderRadius: 6,
+            width: 235, maxHeight: "55vh", overflowY: "auto", zIndex: 8,
+          }}>
+            <div style={{ ...label, padding: "10px 10px 6px" }}>
+              NOTAM CLOSURES ({notams.list.length})
+            </div>
+            {notams.list.map((item) => {
+              const airport = airports?.find((a) => a.icao === item.icao);
+              const hasSecondary = airport ? airport.runways.length > 1 : false;
+
+              let typeLabel, typeColor, note;
+              if (item.kind === "AD") {
+                typeLabel = "AIRPORT CLOSED";
+                typeColor = "#ff5566";
+                note = "no operations";
+              } else if (item.kind === "MR") {
+                typeLabel = `RUNWAY CLOSED · ${item.closedRunwayIds.join(", ")}`;
+                if (hasSecondary) {
+                  typeColor = "#ffaa55";
+                  note = "airport still landable — alt runway available";
+                } else {
+                  typeColor = "#ff5566";
+                  note = "no alt runway — airport not landable";
+                }
+              } else if (item.kind === "MX") {
+                typeLabel = "TAXIWAY CLOSED";
+                typeColor = "#ffcc55";
+                note = "airport landable";
+              } else {
+                typeLabel = "APRON CLOSED";
+                typeColor = "#ffcc55";
+                note = "airport landable";
+              }
+
+              return (
+                <div
+                  key={item.icao}
+                  onClick={() => airport && flyTo(airport)}
+                  onMouseEnter={() => airport && setHovered(airport)}
+                  onMouseLeave={() => setHovered(null)}
+                  style={{
+                    cursor: airport ? "pointer" : "default",
+                    borderTop: "1px solid #0d1e30",
+                    padding: "7px 10px",
+                    background: hovered?.icao === item.icao ? "rgba(96,170,221,0.08)" : "transparent",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                    <span style={{ fontSize: 11, color: "#a0d0ff" }}>{item.icao}</span>
+                    {item.onPath && (
+                      <span style={{ fontSize: 8, color: "#ffb43c", letterSpacing: 1 }}>ON PATH</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 9, color: typeColor, marginBottom: 2 }}>{typeLabel}</div>
+                  <div style={{ fontSize: 8, color: "#3a5575" }}>{note}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Diversion recommendation — only present while an emergency is active */}
+        {diversion && (
+          <div style={{
+            position: "absolute", right: selected ? 272 : 12, bottom: 12,
+            background: "rgba(6,16,26,0.92)", border: `1px solid ${_SEVERITY_COLOR[diversion.severity] || "#1a3050"}`,
+            borderRadius: 6, width: 250, maxHeight: "50vh", overflowY: "auto", zIndex: 8,
+          }}>
+            <div style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "10px 10px 6px",
+            }}>
+              <span style={label}>DIVERSION OPTIONS</span>
+              <span style={{
+                fontSize: 9, color: _SEVERITY_COLOR[diversion.severity] || "#a0d0ff",
+                border: `1px solid ${_SEVERITY_COLOR[diversion.severity] || "#1a3050"}`,
+                borderRadius: 4, padding: "1px 6px", letterSpacing: 1,
+              }}>{diversion.severity}</span>
+            </div>
+
+            {diversion.noReachableAirport && (
+              <div style={{ margin: "0 10px 8px", fontSize: 9, color: "#ff5566", lineHeight: 1.5 }}>
+                ⚠ NO REACHABLE AIRPORT — unreachable even with fully relaxed fuel/turn/runway margins.
+              </div>
+            )}
+            {diversion.degraded && !diversion.noReachableAirport && (
+              <div style={{ margin: "0 10px 8px", fontSize: 8, color: "#ffaa33", lineHeight: 1.5 }}>
+                ⚠ CONSTRAINTS RELAXED — no option met full safety margins:<br />
+                {diversion.relaxationNotes.join(" · ")}
+              </div>
+            )}
+
+            {diversion.candidates.map((cand, i) => {
+              const apt = airports?.find((a) => a.icao === cand.icao);
+              const rank = i + 1;
+              const color = _DIVERSION_RANK_COLORS[i] || _DIVERSION_RANK_COLORS[_DIVERSION_RANK_COLORS.length - 1];
+              return (
+                <div
+                  key={cand.icao}
+                  onClick={() => apt && flyTo(apt)}
+                  onMouseEnter={() => apt && setHovered(apt)}
+                  onMouseLeave={() => setHovered(null)}
+                  style={{
+                    cursor: apt ? "pointer" : "default",
+                    borderTop: "1px solid #0d1e30",
+                    padding: "7px 10px",
+                    background: hovered?.icao === cand.icao ? "rgba(96,170,221,0.08)" : "transparent",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{
+                        fontSize: 9, color, border: `1px solid ${color}`,
+                        borderRadius: 3, padding: "0 4px", fontWeight: 700,
+                      }}>#{rank}</span>
+                      <span style={{ fontSize: 11, color: "#a0d0ff" }}>{cand.icao}</span>
+                    </div>
+                    <span style={{ fontSize: 8, color: "#3a6090" }}>{Math.round(cand.score * 100)}%</span>
+                  </div>
+                  <div style={{ fontSize: 9, color: "#4a7090", marginBottom: 2 }}>
+                    {cand.distance_nm.toFixed(0)} nm · {cand.turn_deg.toFixed(0)}° turn · ETA {cand.eta_min.toFixed(0)} min
+                  </div>
+                  <div style={{ fontSize: 8, color: "#3a5575" }}>{cand.reason}</div>
+                  {cand.relaxed && (
+                    <div style={{ fontSize: 8, color: "#ffaa33", marginTop: 2 }}>⚠ relaxed constraints</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Selected airport info panel */}
         {selected && (
@@ -762,7 +1024,15 @@ export default function SimulateMap() {
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
               <div>
-                <div style={{ fontSize: 16, color: "#e0f0ff", fontWeight: 700, fontFamily: "'Rajdhani',sans-serif", letterSpacing: 1 }}>{selected.icao}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ fontSize: 16, color: "#e0f0ff", fontWeight: 700, fontFamily: "'Rajdhani',sans-serif", letterSpacing: 1 }}>{selected.icao}</div>
+                  {selectedClosure.airportClosed && (
+                    <span style={{
+                      fontSize: 8, color: "#ff5566", border: "1px solid #ff3344",
+                      borderRadius: 4, padding: "2px 6px", letterSpacing: 1,
+                    }}>NOTAM CLSD</span>
+                  )}
+                </div>
                 <div style={{ fontSize: 9, color: "#3a6090", letterSpacing: 1 }}>{selected.iata !== selected.icao ? selected.iata : ""}</div>
               </div>
               <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: "#2a4060", cursor: "pointer", fontSize: 14 }}>✕</button>
@@ -789,9 +1059,22 @@ export default function SimulateMap() {
             {selected.runways.length === 0 && (
               <div style={{ fontSize: 9, color: "#2a4060" }}>NO RUNWAY DATA</div>
             )}
-            {selected.runways.map((rwy) => (
-              <div key={rwy.id} style={{ border, borderRadius: 4, padding: "6px 8px", marginBottom: 6 }}>
-                <div style={{ fontSize: 11, color: "#a0d0ff", marginBottom: 3 }}>{rwy.id}</div>
+            {selected.runways.map((rwy) => {
+              const rwyClosed = selectedClosure.hasSecondary && selectedClosure.closedRwyIds.includes(rwy.id);
+              return (
+              <div key={rwy.id} style={{
+                border: rwyClosed ? "1px solid #ff3344" : border,
+                borderRadius: 4, padding: "6px 8px", marginBottom: 6,
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                  <div style={{ fontSize: 11, color: rwyClosed ? "#ff5566" : "#a0d0ff" }}>{rwy.id}</div>
+                  {rwyClosed && (
+                    <span style={{
+                      fontSize: 8, color: "#ff5566", border: "1px solid #ff3344",
+                      borderRadius: 4, padding: "1px 5px", letterSpacing: 1,
+                    }}>CLSD</span>
+                  )}
+                </div>
                 <div style={{ fontSize: 9, color: "#4a7090" }}>{rwy.length_ft} × {rwy.width_ft} ft · {rwy.surface || "UNK"}</div>
                 {rwy.ends.map((e) => (
                   <div key={e.id} style={{ fontSize: 9, color: "#3a5575" }}>
@@ -799,7 +1082,8 @@ export default function SimulateMap() {
                   </div>
                 ))}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

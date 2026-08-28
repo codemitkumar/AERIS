@@ -50,7 +50,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-AUTO_INJECT_PROBABILITY = 0.1   # 10 % chance per simulation
+AUTO_INJECT_PROBABILITY  = 0.1   # 10 % chance per simulation
+NOTAM_INJECT_PROBABILITY = 0.7   # 70 % chance a simulation carries NOTAM closures
 
 
 # ── worker (must be top-level for multiprocessing pickling) ───────────────────
@@ -73,6 +74,7 @@ def _run_worker(args: tuple) -> tuple:
 
     manager = InjectionManager()
     manager.configure_auto_inject(probability=AUTO_INJECT_PROBABILITY)
+    manager.configure_notam_injection(probability=NOTAM_INJECT_PROBABILITY)
 
     async def _simulate():
         bus     = DataBus()
@@ -106,6 +108,16 @@ def _run_worker(args: tuple) -> tuple:
     }
     if manager.injected_summary:
         output["injectedEmergency"] = manager.injected_summary
+    if manager.notam.closures:
+        output["notamClosures"] = [
+            {
+                "icao":    c["icao"],
+                "onPath":  c["on_path"],
+                "summary": c["notam"].summary,
+                "raw":     c["notam"].raw,
+            }
+            for c in manager.notam.closures
+        ]
     output["simulationData"] = records
 
     elapsed = time.perf_counter() - t0

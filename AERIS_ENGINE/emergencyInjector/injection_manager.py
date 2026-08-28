@@ -7,6 +7,7 @@ from emergencyInjector.altitude.rapid_altitude_loss     import RapidAltitudeLoss
 from emergencyInjector.altitude.energy_bleed            import EnergyBleedInjector
 from emergencyInjector.altitude.structural_g_event      import StructuralGEventInjector
 from emergencyInjector.fuel.fuel_leak                   import FuelLeakInjector
+from emergencyInjector.notam.airport_closure             import NotamInjector
 
 
 class InjectionManager:
@@ -23,6 +24,13 @@ class InjectionManager:
     The manager pre-rolls the decision and schedules the fault to fire at a
     random point during cruise/climb without any external trigger needed.
 
+    NOTAM injection
+    ----------------
+    Call configure_notam_injection(probability) once before flight_loop starts.
+    Independent of configure_auto_inject — this seeds the flight with airport/
+    runway/taxiway closure NOTAMs (see emergencyInjector.notam.airport_closure)
+    on the very first tick, since real NOTAMs are known before departure.
+
     Supported inject commands (parsed by terminal_command_reader in main.py)
     -------------------------------------------------------------------------
     inject ias [captain|fo|both] [rate]                    — IAS ADC drift
@@ -32,6 +40,7 @@ class InjectionManager:
     inject energy [alt_fpm] [spd_kts_s]                  — simultaneous alt+speed bleed
     inject turbulence [amplitude_fpm] [freq_hz]           — sinusoidal VS / G oscillation
     inject fuel_leak [rate_lbs_hr] [left|right|center|all] — tank fuel leak
+    inject notam [count]                                  — airport/runway closure NOTAMs
     clear [type|all]                                      — stop one or all injectors
     status                                                — print active injector states
     """
@@ -44,6 +53,7 @@ class InjectionManager:
         self.energy       = EnergyBleedInjector()
         self.turbulence   = StructuralGEventInjector()
         self.fuel_leak    = FuelLeakInjector()
+        self.notam        = NotamInjector()
 
         self._all = [
             self.ias,
@@ -53,6 +63,7 @@ class InjectionManager:
             self.energy,
             self.turbulence,
             self.fuel_leak,
+            self.notam,
         ]
 
         # Accumulates names of every fault that was ever activated this flight
@@ -63,10 +74,25 @@ class InjectionManager:
         self._auto_inject_fn        = None            # lambda that calls inj.start(...)
         self._auto_injected: bool   = False
 
+        # NOTAM auto-inject state (configured by configure_notam_injection)
+        self._notam_armed: bool             = False
+        self._notam_fired: bool             = False
+        self._notam_count_range: tuple      = (10, 10)
+        self._notam_corridor_nm: float      = 60.0
+
     # ── emergency_fn interface ────────────────────────────────────────────────
 
     def __call__(self, state: dict, gen) -> None:
         """Called by FlightGenerator.step() on every tick."""
+
+        # NOTAMs are briefed pre-departure, so fire on the very first tick
+        if self._notam_armed and not self._notam_fired:
+            self.notam.start(
+                gen,
+                count=random.randint(*self._notam_count_range),
+                corridor_nm=self._notam_corridor_nm,
+            )
+            self._notam_fired = True
 
         # Fire scheduled auto-inject when sim time crosses the threshold
         if not self._auto_injected and gen.time >= self._auto_inject_at:
@@ -133,6 +159,45 @@ class InjectionManager:
 
         # Fire somewhere between 60 s and 10 min into the flight (climb / early cruise)
         self._auto_inject_at = random.uniform(60.0, 600.0)
+        return True
+
+    def configure_notam_injection(
+        self,
+        probability: float = 0.7,
+        count_range: tuple = (10, 10),
+        corridor_nm: float = 60.0,
+    ) -> bool:
+        """Pre-roll whether this flight carries NOTAM airport/runway closures.
+
+        Independent of configure_auto_inject — real flights almost always have
+        *some* NOTAMs in effect somewhere on the route or system-wide, so the
+        default probability here is high compared to the system-fault roll.
+        Defaults to a fixed 10 closures per flight.
+
+        Parameters
+        ----------
+        probability : float
+            Chance (0–1) that NOTAM closures are seeded this flight.
+        count_range : tuple[int, int]
+            Min/max number of airports that get a closure NOTAM.
+        corridor_nm : float
+            Lateral distance from the direct origin→destination route within
+            which an airport counts as "on path" rather than "scattered".
+
+        Returns
+        -------
+        bool
+            True if NOTAM closures were armed, False if the roll missed.
+        """
+        self._notam_fired = False
+
+        if random.random() >= probability:
+            self._notam_armed = False
+            return False
+
+        self._notam_armed        = True
+        self._notam_count_range  = count_range
+        self._notam_corridor_nm  = corridor_nm
         return True
 
     # ── metadata ─────────────────────────────────────────────────────────────
