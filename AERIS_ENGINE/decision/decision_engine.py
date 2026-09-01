@@ -1,29 +1,21 @@
 """Diversion Decision Engine — Layer 3 DataBus subscriber.
 
-Live wiring for GRACE (Graceful-Relaxation Algorithm for aircraft Emergency
-Navigation — see decision/diversion_selector.py for the algorithm itself).
+Live wiring for GRACE (decision/diversion_selector.py). Runs right after
+the Layer 2 assessment module so it can read state["assessment"] the same
+tick it's written (see modules/registry.py for the ordering).
 
-Runs after modules/assessment/aircraft_health.py (Layer 2) in the same tick,
-so it can read the fresh state["assessment"]["overallRisk"] the moment that
-module writes it (DataBus subscribers registered without internal `await`
-points run to completion in registration order — see modules/registry.py).
-
-This module owns exactly one job: turn "assessment says X" into "here are
-the top 3 diversion airports right now", by calling into GRACE — a
-plug-and-play scoring engine that knows nothing about the DataBus,
-AlertTracker, or FlightGenerator. Swapping the severity classifier for a
-real AI model later means changing _RISK_TO_SEVERITY (or replacing this
-module's on_state entirely) — GRACE itself needs no changes.
+Turns "assessment says X" into "here are the top 3 diversion airports" —
+GRACE itself doesn't know about the DataBus/AlertTracker, so swapping the
+severity classifier later only means changing _RISK_TO_SEVERITY here.
 """
 
 from core.data_bus import DataBus
 from data.ingestion.faa_airport_loader import load_airports
 from decision.diversion_selector import DiversionSelector
 
-# assessment.overallRisk (4 tiers, "LOW" = nothing active) -> this module's
-# emergency severity (3 tiers, only assigned once something IS active).
+# overallRisk (4 tiers, LOW = nothing active) -> our severity (3 tiers).
 _RISK_TO_SEVERITY = {
-    "LOW":      None,        # nothing active — no diversion recommendation needed
+    "LOW":      None,
     "MODERATE": "LOW",
     "HIGH":     "MODERATE",
     "CRITICAL": "HIGH",
@@ -90,10 +82,6 @@ class DiversionDecisionModule:
             "severity":         severity,
             "activeConditions": active_conditions,
             "candidates":       candidates,
-            # True once any candidate needed loosened fuel/turn/runway margins
-            # to be found at all — see decision/diversion_selector.py's
-            # progressive relaxation. False (and notes empty) when the
-            # top pick was found at full strictness.
             "degraded":         bool(candidates) and candidates[0].get("relaxed", False),
             "relaxationNotes":  candidates[0].get("relaxation_notes", []) if candidates else [],
             "noReachableAirport": not candidates,

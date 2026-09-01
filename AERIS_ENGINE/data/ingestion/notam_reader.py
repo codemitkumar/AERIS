@@ -12,10 +12,9 @@ Understands the standard ICAO NOTAM format:
     F) SFC
     G) UNL
 
-No network access — feed it raw NOTAM text (single or many, in one block)
-and it returns `Notam` objects with the Q-code decoded, timestamps parsed,
-coordinates/radius extracted, and the free-text E) field expanded from
-contraction codes into plain English.
+Feed it raw NOTAM text (one or many) and get back `Notam` objects with the
+Q-code decoded, timestamps parsed, coordinates/radius extracted, and the
+E) free text expanded from contractions into plain English. No network I/O.
 """
 
 from __future__ import annotations
@@ -28,9 +27,8 @@ from datetime import datetime, timezone
 # Reference tables
 # ---------------------------------------------------------------------------
 
-# ICAO Doc 8126 Q-code subject (chars 2-3) and condition (chars 4-5) letters.
-# Not exhaustive — covers the subjects/conditions that show up in day-to-day
-# NOTAMs. Unknown codes fall back to the raw letters instead of raising.
+# ICAO Doc 8126 Q-code subject/condition letters. Not exhaustive — covers the
+# common cases; unknown codes fall back to the raw letters.
 _Q_SUBJECT: dict[str, str] = {
     "AC": "approach control service", "AD": "aerodrome",
     "AE": "airspace reservation", "AF": "aerodrome/facility",
@@ -140,8 +138,7 @@ _SCOPE = {
     "K": "checklist",
 }
 
-# Common ICAO/FAA NOTAM contraction codes -> plain English, applied word-by-
-# word (with a couple of fixed multi-word phrases) when decoding the E) text.
+# NOTAM contraction codes -> plain English, applied word-by-word.
 _CONTRACTIONS: dict[str, str] = {
     "ACFT": "aircraft", "ACT": "active", "ADJ": "adjacent", "AGL": "above ground level",
     "AD": "aerodrome", "ALT": "altitude", "ALTN": "alternate", "AMDT": "amendment",

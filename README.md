@@ -281,25 +281,28 @@ Required runway length is derived from a landing-performance heuristic (`is_tran
 
 ### 5.3 Multi-Factor Scoring
 
-Each surviving candidate is scored as a weighted sum over five factors (`fn(candidate, context) → [0, 1]`), normalised by the active severity tier's weight profile:
+Each surviving candidate is scored as a weighted sum over six factors (`fn(candidate, context) → [0, 1]`), normalised by the active severity tier's weight profile:
 
 | Factor | Signal | Formula (abbreviated) |
 |---|---|---|
 | `reachability` | Great-circle distance from current position | `exp(-distance_nm / 150)` |
-| `turn` | Heading change required to reach the airport | `1 − turn_deg / max_turn_deg` |
+| `turn` | Heading change required to reach the airport | `1 − turn_deg_scoring / max_turn_deg` |
 | `capability` | Best usable runway length vs. required length | `clamp((best_rwy_ft / required_ft) / 1.5, 0, 1)`, +0.15 for large/medium airports under a `prefer_larger_airport` condition |
 | `fuel_margin` | Fuel remaining after worst-case burn to reach, minus reserve | `clamp(margin_lbs / fuel_total_lbs, 0, 1)` |
 | `availability` | NOTAM cleanliness (0 or partial runway closures) | `1.0` clean, `0.5` if a non-blocking runway closure exists |
+| `familiarity` | Is this the departure airport shortly after takeoff, or the destination during a go-around? | `anchor_strength` (0–1; see Section 5.5) |
 
-Severity determines which factors dominate,  a HIGH-severity emergency weights proximity and turn heavily ("get down now, nearby"); a LOW-severity one weights airport capability more ("there's time to pick a better field"):
+Note `turn` reads `turn_deg_scoring`, not the true `turn_deg`, an anchored candidate's turn counts for less in scoring even though the true angle is unchanged for the hard turn-capability filter (Section 5.5).
 
-| Severity | reachability | turn | capability | fuel_margin | availability |
-|---|---|---|---|---|---|
-| `LOW` | 0.15 | 0.10 | **0.40** | 0.15 | 0.20 |
-| `MODERATE` | 0.30 | 0.20 | 0.25 | 0.15 | 0.10 |
-| `HIGH` | **0.45** | **0.30** | 0.10 | 0.10 | 0.05 |
+Severity determines which factors dominate,  a HIGH-severity emergency weights proximity, turn, and familiarity heavily ("get down now, somewhere known"); a LOW-severity one weights airport capability more ("there's time to pick a better field"):
 
-Turning also costs fuel and time: a candidate's effective diversion distance is inflated by up to 5 % at a full 180° turn before the fuel-reachability check runs, so an aligned airport slightly farther away can outrank a closer one that requires reversing course.
+| Severity | reachability | turn | capability | fuel_margin | availability | familiarity |
+|---|---|---|---|---|---|---|
+| `LOW` | 0.15 | 0.10 | **0.40** | 0.15 | 0.20 | 0.10 |
+| `MODERATE` | 0.30 | 0.20 | 0.25 | 0.15 | 0.10 | 0.15 |
+| `HIGH` | **0.45** | **0.30** | 0.10 | 0.10 | 0.05 | **0.20** |
+
+Turning also costs fuel and time: a candidate's effective diversion distance is inflated by up to 5 % at a full 180° turn before the fuel-reachability check runs, so an aligned airport slightly farther away can outrank a closer one that requires reversing course — unless that closer-but-behind option is the departure airport or a go-around field, per Section 5.5.
 
 ### 5.4 Emergency Condition Modifiers
 
@@ -317,7 +320,25 @@ Severity alone does not capture *why* a diversion is needed. GRACE additionally 
 
 This registry is the explicit integration point for Layer 4: a future learned severity classifier, or a new flight-control-failure detector, only needs to raise its alert ID and register a modifier entry,  no change to the scoring or relaxation logic in Sections 5.3 or 5.5 is required. New scoring factors and severity weight profiles are similarly pluggable via `register_factor()` and `set_severity_weights()`.
 
-### 5.5 Graceful Degradation
+### 5.5 Known-Airport Anchoring
+
+Distance-and-turn scoring alone systematically undervalues two common, low-risk real-world options that crews are specifically briefed and trained for:
+
+1. **Returning to the departure airport shortly after takeoff.** By the time an early-flight emergency is recognised, the aircraft has typically already turned onto course toward the destination, so the departure airport sits nearly directly *behind* it. A naive turn penalty then scores a strange airport merely ahead of the aircraft *better* than the field it just left, despite "return to departure" being a standard, pre-briefed contingency rather than a novel manoeuvre.
+2. **The destination airport during a go-around.** The aircraft is already established near the field and known to ATC; there is essentially never a reason to prefer an unfamiliar airport over attempting the same field again, unless something about that specific airport is the actual problem, which the NOTAM/runway/fuel hard filters (Section 5.2) already catch independently.
+
+GRACE addresses this with an *anchor strength* computed once per query, not per candidate:
+
+| Anchor | Trigger | Strength |
+|---|---|---|
+| Departure airport | `state["origin_icao"]` | Linear fade from `1.0` at engine start to `0.0` at 20 simulated minutes (`_EARLY_FLIGHT_WINDOW_S`) |
+| Destination airport | `GO_AROUND` present in `active_conditions` | `1.0` while active, `0.0` otherwise |
+
+For whichever candidate matches, the anchor strength discounts the angle that counts against it, `turn_deg_scoring = turn_deg × (1 − anchor_strength × 0.85)` (`_ANCHOR_TURN_DISCOUNT = 0.15`), so a fully anchored 180° return-to-field scores as if it were roughly a 27° turn, and directly feeds the `familiarity` factor (Section 5.3) as `anchor_strength` itself.
+
+Critically, anchoring is bounded the same way graceful degradation is (Section 5.6): it never touches the hard turn-*capability* filter (`turn_deg > max_turn_deg` is checked against the true angle, so a genuine directional-control-loss condition still excludes the departure airport if it truly can't be reached) and never touches NOTAM closures, runway length, or fuel reachability. An anchored airport that's closed, too short, or unreachable on fuel is excluded exactly like any other candidate — anchoring only changes how much a *reachable, otherwise-viable* known airport is preferred over an equally reachable unfamiliar one. Every candidate reports `anchor` (`"origin"` / `"go_around"` / `null`) and `anchor_strength` for transparency, and the `reason` string names it explicitly (e.g. *"departure airport — briefed return-to-field option"*).
+
+### 5.6 Graceful Degradation
 
 The algorithm's namesake behaviour: if no airport survives the hard filters at full worst-case strictness, GRACE does not return an empty result. It retries at progressively looser fuel/turn margins, 
 
@@ -328,7 +349,7 @@ relaxation levels:  1.0 → 0.7 → 0.4 → 0.15 → 0.0
 
 stopping at the first tier that yields a candidate. Per Section 5.2, this relaxation is bounded: it only ever unwinds the *extra* worst-case safety padding back toward the standard reserve and an achievable turn, never below "reach it with a real reserve intact." Runway length and NOTAM closures are excluded from relaxation entirely. Every candidate produced under a relaxed tier carries `relaxed: true` and human-readable `relaxation_notes` (e.g. *"turn limit relaxed 45° → 128°"*), and the recommendation as a whole is flagged `degraded: true`, so a relaxed pick can never be silently mistaken for one that met full margins. If even full relaxation finds nothing reachable, GRACE reports `noReachableAirport: true` rather than fabricating an option.
 
-### 5.6 Live Integration
+### 5.7 Live Integration
 
 `DiversionDecisionModule` maps the Layer 2 `overallRisk` classification (`LOW/MODERATE/HIGH/CRITICAL`, where `LOW` means no active alert) down to GRACE's three-tier severity scale, skipping computation entirely while nothing is active. Recomputation is throttled to severity changes or a 15-simulated-second interval, not every 30 Hz tick, since a full airport-dataset scan is unnecessary at that cadence. Output is JSON-serialisable and flows through the same DataBus/WebSocket path as every other module, so it appears in both the live `AERIS_UI` map (ranked diversion markers, click-to-zoom candidate list) and the batch-generated training dataset.
 

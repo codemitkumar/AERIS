@@ -133,8 +133,6 @@ function useLiveFlight() {
               list: s.notam_closures || [],
             });
           }
-          // Diversion recommendation — only present while an emergency is
-          // active (decision/decision_engine.py omits the key otherwise).
           setDiversion(s.diversion_recommendation ?? null);
         } catch (_) {}
       };
@@ -147,11 +145,8 @@ function useLiveFlight() {
   return { connected, meta, flight, notams, diversion };
 }
 
-// ── NOTAM closure lookup ────────────────────────────────────────────────────
-// A runway-specific closure only reads as "runway closed" when the airport
-// has another runway to fall back to; with no secondary runway (or no
-// runway geometry at all) it's operationally the same as the airport being
-// closed, so it renders as a full-airport closure instead.
+// A runway closure only counts as "runway closed" if there's a secondary
+// runway to fall back to — otherwise it reads as a full airport closure.
 const EMPTY_ARR = [];
 function closureState(airport, notams) {
   const closedRwyIds = notams.closedRunways[airport.icao] || EMPTY_ARR;
@@ -408,11 +403,7 @@ export default function SimulateMap() {
       const acWorld = project(flight.lat, flight.lon);
       const { sx: ax, sy: ay } = worldToScreen(acWorld.x, acWorld.y, view, base, w, h);
 
-      // ── Diversion recommendation overlay ─────────────────────────────
-      // Only present in the WS feed while an emergency is active (see
-      // decision/decision_engine.py). Rank 1 gets a solid bright line and
-      // ring; ranks 2-3 get dimmer dashed lines, so the "best pick" always
-      // reads clearly even with three options on screen at once.
+      // Rank 1 gets a solid bright line/ring; ranks 2-3 are dimmer/dashed.
       if (diversion?.candidates?.length) {
         diversion.candidates.forEach((cand, i) => {
           const apt = airports.find((a) => a.icao === cand.icao);

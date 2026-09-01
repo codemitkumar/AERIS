@@ -17,8 +17,9 @@ Terminal injection commands (type while simulation is running):
     inject windshear [rate_fpm] [duration_s]     — windshear burst (auto-stops)
     inject energy [alt_fpm] [spd_kts_s]          — total energy bleed
     inject turbulence [amplitude_fpm] [freq_hz]  — turbulence / G oscillation
+    inject holding [duration_min] [rate_lbs_hr]  — unplanned ATC holding delay
     inject notam [count]                         — airport/runway closure NOTAMs
-    clear [ias|alt_disagree|descent|windshear|energy|turbulence|notam]  — clear one
+    clear [ias|alt_disagree|descent|windshear|energy|turbulence|holding|notam]  — clear one
     clear                                        — clear all active injectors
     status                                       — print injector states
 """
@@ -115,11 +116,8 @@ async def flight_loop(gen: FlightGenerator, ws: WebSocketServer, log_fp, bus: Da
         tick_start = loop.time()
 
         state = gen.step()
-        # Run all DataBus modules (assessment, diversion decision, ...) before
-        # building the broadcast/log record, so the keys they add to `state`
-        # (e.g. "assessment", "diversion_recommendation") actually make it
-        # into the live WS feed and the JSONL log for this tick, not just
-        # into a `record` copy that gets discarded after publish() returns.
+        # Run DataBus modules before building `record`, so their added keys
+        # (assessment, diversion_recommendation) reach the WS feed/log too.
         await bus.publish(state)
         cross  = _cross_check(state)
         record = {**state, **cross}
@@ -164,8 +162,9 @@ async def terminal_command_reader(manager: InjectionManager, gen: FlightGenerato
         "  inject energy [alt_fpm] [spd_kts_s]\n"
         "  inject turbulence [amplitude_fpm] [freq_hz]\n"
         "  inject fuel_leak [rate_lbs_hr] [left|right|center|all]\n"
+        "  inject holding [duration_min] [rate_lbs_hr]\n"
         "  inject notam [count]\n"
-        "  clear [ias|alt_disagree|descent|windshear|energy|turbulence|fuel_leak|notam]\n"
+        "  clear [ias|alt_disagree|descent|windshear|energy|turbulence|fuel_leak|holding|notam]\n"
         "  clear   (clears all)\n"
         "  status"
     )
@@ -229,6 +228,11 @@ async def terminal_command_reader(manager: InjectionManager, gen: FlightGenerato
                     tank = parts[3]        if len(parts) > 3 else "left"
                     manager.fuel_leak.start(rate_lbs_hr=rate, tank=tank)
 
+                elif fault == "holding":
+                    duration = float(parts[2]) * 60.0 if len(parts) > 2 else None
+                    rate     = float(parts[3])         if len(parts) > 3 else None
+                    manager.holding.start(gen, duration_s=duration, rate_lbs_hr=rate)
+
                 elif fault == "notam":
                     count = int(parts[2]) if len(parts) > 2 else None
                     manager.notam.start(gen, count=count)
@@ -247,6 +251,7 @@ async def terminal_command_reader(manager: InjectionManager, gen: FlightGenerato
                     "energy":       manager.energy,
                     "turbulence":   manager.turbulence,
                     "fuel_leak":    manager.fuel_leak,
+                    "holding":      manager.holding,
                     "notam":        manager.notam,
                 }
                 if target in _clear_map:
