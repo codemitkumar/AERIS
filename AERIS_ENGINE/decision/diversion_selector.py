@@ -1,66 +1,16 @@
-"""GRACE — a Graceful-Relaxation Algorithm for Aircraft Emergency Navigation.
+"""GRACE — Graceful-Relaxation Algorithm for Aircraft Emergency Navigation.
 
-Given the live flight state, the loaded airport dataset, and an emergency
-severity tier (LOW / MODERATE / HIGH), GRACE ranks every reachable airport
-and returns the top N diversion candidates: a plug-and-play scoring engine
-that finds the best divert options given where the aircraft is *right now*,
-where it can still point given its current condition, and how much fuel it
-actually has to get there.
+Ranks every reachable airport against live flight state + severity tier,
+returns the top N diversion candidates.
 
-The "graceful" half of the name is the load-bearing part: when full-strictness
-worst-case assumptions leave nothing reachable, GRACE doesn't return an empty
-list — it re-tries at progressively looser fuel/turn safety margins (see
-_RELAXATION_LEVELS) until something survives, labeling every degraded result
-so a relaxed pick is never mistaken for a fully-compliant one. That grace
-has bounds, though: required runway length and NOTAM closures are never
-relaxed, at any tier — see the Modeling notes below.
-
-Designed to be extended without touching the core algorithm:
-
+Extension points:
     New scoring factor:       DiversionSelector.register_factor(...)
     New severity weight set:  DiversionSelector.set_severity_weights(...)
     New emergency condition:  DiversionSelector.register_condition_modifier(...)
 
-Severity is expected to come from an upstream classifier — today, the
-rule-based AircraftHealthModule's `overallRisk`; tomorrow, an AI module.
-GRACE only ever consumes the resulting "LOW"/"MODERATE"/"HIGH" string plus
-a list of active condition IDs (alert IDs), so swapping or upgrading that
-classifier requires no changes here — see decision/decision_engine.py for
-the current wiring.
-
-Modeling notes
----------------
-- Reachability is evaluated from the aircraft's *current* position, not the
-  origin — this is a live diversion query, not a pre-flight dispatch plan.
-- "Direction of flight" is handled with a turn budget: each active
-  condition can restrict max_turn_deg (e.g. a directional-control-loss
-  condition might cap it at 45 degrees). Airports requiring a bigger turn
-  than the budget allows are excluded outright — "if the rudder is gone,
-  some airports are simply unreachable" — while within the allowed budget,
-  smaller turns still score higher, since turning costs fuel and time
-  (modeled as a small inflation of effective diversion distance).
-- Fuel reachability is evaluated worst-case: each active condition can
-  raise fuel_burn_multiplier (e.g. a suspected fuel leak assumes the leak
-  rate could double before touchdown) and/or fuel_margin_buffer (extra
-  reserve required on top of the standard ICAO reserve already budgeted in
-  fuel_reserve_min_lbs). Airports that can't be reached under that
-  worst-case burn rate, with reserve intact, are excluded — not merely
-  penalized.
-- NOTAM closures (see emergencyInjector.notam / data.ingestion.notam_reader)
-  are read straight out of `state`: a fully closed airport is excluded; an
-  airport with a closed runway that still has a usable secondary runway is
-  kept, but scored on its remaining usable runway length only.
-- Required runway length (_MIN_LANDABLE_RATIO) is a hard, non-negotiable
-  floor — never excluded, only ever a physical fact. It sits in the exact
-  same "never relax this" category as NOTAM closures, not with the fuel/turn
-  safety margins below.
-- If nothing survives at full strictness, select() retries at progressively
-  looser fuel/turn margins (see _RELAXATION_LEVELS) rather than returning
-  nothing — but that relaxation only ever touches the *safety padding* on
-  top of the standard reserve and the achievable turn, never the runway
-  floor and never a NOTAM closure. Every returned candidate says so via its
-  `relaxed`/`relaxation_notes` fields, so a degraded pick is never silently
-  indistinguishable from a fully-compliant one.
+Severity/active_conditions come from decision/decision_engine.py (today:
+AircraftHealthModule's overallRisk; later, an AI classifier) — swapping that
+out doesn't require touching this file.
 """
 
 import math
@@ -93,33 +43,30 @@ def _turn_deg(heading, bearing):
     return abs((bearing - heading + 180) % 360 - 180)
 
 
-# ── Severity weight profiles ────────────────────────────────────────────────
-# Weights are normalized by their sum at scoring time, so profiles don't need
-# to add up to 1.0, and registering a new factor (which appends a default
-# weight to every profile) never breaks an existing one.
+# Weights normalize by their sum, so a new factor (Section register_factor)
+# never breaks an existing profile.
+# familiarity = origin (early flight) or destination (go-around); weighted
+# higher at HIGH severity since there's less time to deliberate.
 _DEFAULT_SEVERITY_WEIGHTS = {
     "LOW": {
         "reachability": 0.15, "turn": 0.10, "capability": 0.40,
-        "fuel_margin": 0.15, "availability": 0.20,
+        "fuel_margin": 0.15, "availability": 0.20, "familiarity": 0.10,
     },
     "MODERATE": {
         "reachability": 0.30, "turn": 0.20, "capability": 0.25,
-        "fuel_margin": 0.15, "availability": 0.10,
+        "fuel_margin": 0.15, "availability": 0.10, "familiarity": 0.15,
     },
     "HIGH": {
         "reachability": 0.45, "turn": 0.30, "capability": 0.10,
-        "fuel_margin": 0.10, "availability": 0.05,
+        "fuel_margin": 0.10, "availability": 0.05, "familiarity": 0.20,
     },
 }
 
-# ── Emergency condition -> reachability modifiers ───────────────────────────
-# Keyed by the same alert IDs the AlertTracker / math modules already raise
-# (see modules/assessment/aircraft_health.py's _ALERT_SUBSYSTEM table), so
-# wiring in a *new* AI-detected condition is just adding an entry here —
-# nothing else in the selector needs to change.
+# Keyed by the same alert IDs AlertTracker already raises — a new AI-detected
+# condition just needs an entry here, nothing else changes.
 _DEFAULT_CONDITION_MODIFIERS = {
     "FUEL_LEAK": {
-        "fuel_burn_multiplier": 2.0,   # worst case: assume the leak rate doubles before landing
+        "fuel_burn_multiplier": 2.0,   # assume the leak rate could double before landing
         "fuel_margin_buffer":   1.15,
     },
     "FUEL_IMBALANCE":  {"fuel_burn_multiplier": 1.05},
@@ -127,36 +74,31 @@ _DEFAULT_CONDITION_MODIFIERS = {
     "MIN_DIVERT_FUEL": {"fuel_margin_buffer": 1.20},
     "ENGINE_FAILURE":  {"fuel_burn_multiplier": 1.10, "prefer_larger_airport": True},
     "THRUST_ASYM":     {"fuel_burn_multiplier": 1.05},
-    "ICE_ACCUM":       {"fuel_burn_multiplier": 1.20},  # added drag/weight from airframe ice
-    # Illustrative plug-in point: no live alert raises this yet, but a future
-    # flight-control / AI module can register under whatever ID it uses (e.g.
-    # "RUDDER_FAILURE") — the moment that ID shows up in active_conditions,
-    # turns get capped with zero changes to the scoring code below.
+    "ICE_ACCUM":       {"fuel_burn_multiplier": 1.20},  # drag/weight from airframe ice
+    # No live alert raises this yet — example of the plug-in point for a
+    # future flight-control failure detector.
     "DIRECTIONAL_CONTROL_LOSS": {"max_turn_deg": 45.0, "prefer_larger_airport": True},
 }
 
-_TURN_FUEL_PENALTY_FRAC = 0.05   # a full 180 deg turn adds ~5% to effective diversion distance
-_DISTANCE_DECAY_NM      = 150.0  # exponential falloff scale for the reachability factor
+_TURN_FUEL_PENALTY_FRAC = 0.05   # full 180 deg turn adds ~5% to effective distance
+_DISTANCE_DECAY_NM      = 150.0  # falloff scale for the reachability factor
 
-# Below this fraction of required runway length, hard-exclude — always, at
-# every relaxation tier. This is not a safety *margin* like the fuel/turn
-# numbers below; it's the physical fact of whether the aircraft can stop on
-# the pavement. Loosening it under pressure is exactly the failure mode this
-# algorithm exists to prevent, so it's treated the same as a NOTAM closure:
-# never touched by _RELAXATION_LEVELS below.
+# Hard floor, never relaxed at any tier — physical fact, not a safety margin.
 _MIN_LANDABLE_RATIO = 0.55
 
-# ── Graceful degradation (the "G" in GRACE) ─────────────────────────────────
-# If nothing survives the hard filters at full strictness (the worst-case
-# fuel-burn/turn assumptions from the active conditions), the selector
-# doesn't just return an empty list — it retries at progressively looser
-# tiers. 1.0 = the full worst-case modifiers computed from active_conditions;
-# 0.0 = baseline reachability (normal ICAO reserve, unrestricted turn). It
-# never goes below "you must be able to reach it with a standard reserve
-# intact". Runway length (_MIN_LANDABLE_RATIO, above) and NOTAM closures are
-# never relaxed at any tier — those aren't margins, they're facts about
-# whether landing is physically possible at all.
+# Graceful degradation: if nothing survives at full strictness, retry looser
+# tiers (1.0 = full worst-case, 0.0 = standard reserve / unrestricted turn).
+# Runway length and NOTAM closures are excluded from relaxation entirely.
 _RELAXATION_LEVELS = (1.0, 0.7, 0.4, 0.15, 0.0)
+
+# Known-airport anchoring: distance/turn scoring alone undervalues returning
+# to the departure airport early in the flight (it's usually behind you by
+# then) and re-attempting the destination during a go-around (you're already
+# there). Anchoring only discounts the turn used for scoring/fuel-penalty and
+# feeds the familiarity factor — it never touches NOTAM/runway/fuel hard
+# filters, so an anchored airport that's genuinely unusable is still excluded.
+_EARLY_FLIGHT_WINDOW_S = 20 * 60  # origin anchor fades out over 20 min after departure
+_ANCHOR_TURN_DISCOUNT  = 0.15     # an anchored turn counts as 15% of its real angle
 
 
 def _lerp(floor, full, relax):
@@ -184,8 +126,7 @@ def _relaxation_notes(relax, configured, effective):
 
 
 def _required_runway_ft(is_transport: bool, vref_kts: float) -> float:
-    """Rough required-landing-distance heuristic. Approximate on purpose —
-    swap in a real performance-model lookup later without touching callers."""
+    """Rough landing-distance heuristic — swap for a real perf lookup later."""
     if not is_transport:
         return 2200.0
     if vref_kts <= 0:
@@ -214,8 +155,8 @@ def _resolve_modifiers(active_conditions, registry):
 
 
 def _closure_status(apt, notam_closed_airports, notam_closed_runways):
-    """Mirrors the AERIS_UI SimulateMap closureState() rule: a runway closure
-    only matters if there's no secondary runway to fall back to."""
+    """Matches AERIS_UI's closureState(): a runway closure only counts if
+    there's no secondary runway to fall back to."""
     icao = apt.get("icao", "")
     closed_rwy_ids = notam_closed_runways.get(icao, [])
     runways = apt.get("runways") or []
@@ -225,9 +166,8 @@ def _closure_status(apt, notam_closed_airports, notam_closed_runways):
 
 
 def _capability_ft(apt, closed_rwy_ids):
-    """Best usable runway length. Falls back to the authoritative
-    max_rwy_ft classification field when per-runway end geometry wasn't
-    joinable (NASR join gaps) or no closure applies to the known runways."""
+    """Best usable runway length; falls back to max_rwy_ft when per-runway
+    geometry wasn't joinable."""
     runways = apt.get("runways") or []
     if closed_rwy_ids and runways:
         open_lengths = [r.get("length_ft", 0) for r in runways if r.get("id") not in closed_rwy_ids]
@@ -244,8 +184,9 @@ def _factor_reachability(candidate, ctx):
 
 
 def _factor_turn(candidate, ctx):
+    # turn_deg_scoring, not the true angle — anchored turns count for less.
     max_turn = max(ctx["max_turn_deg"], 1e-6)
-    return 1.0 - min(candidate["turn_deg"], max_turn) / max_turn
+    return 1.0 - min(candidate["turn_deg_scoring"], max_turn) / max_turn
 
 
 def _factor_capability(candidate, ctx):
@@ -266,13 +207,15 @@ def _factor_availability(candidate, ctx):
     return 0.5 if candidate["runway_closures"] else 1.0
 
 
-class DiversionSelector:
-    """Reference implementation of GRACE — the Graceful-Relaxation Algorithm
-    for aircraft Emergency Navigation.
+def _factor_familiarity(candidate, ctx):
+    return candidate["anchor_strength"]
 
-    Not tied to any specific aircraft-state shape beyond a handful of dict
-    keys (see select()) and doesn't touch the DataBus/FlightGenerator at
-    all — decision/decision_engine.py is what wires this into the live sim.
+
+class DiversionSelector:
+    """Reference implementation of GRACE.
+
+    Only touches a handful of dict keys (see select()) — no DataBus or
+    FlightGenerator coupling. decision/decision_engine.py wires it in.
     """
 
     def __init__(self):
@@ -284,12 +227,9 @@ class DiversionSelector:
     # ── extension points ─────────────────────────────────────────────────
 
     def register_factor(self, name: str, fn, default_weight: float = 0.1) -> None:
-        """Add a scoring factor: fn(candidate, ctx) -> float in [0, 1].
-
-        Automatically appended to every existing severity weight profile at
-        `default_weight` so it participates immediately; follow up with
-        set_severity_weights() to fine-tune its weight per tier.
-        """
+        """fn(candidate, ctx) -> float in [0, 1]. Auto-added to every
+        severity profile at default_weight; tune per-tier with
+        set_severity_weights() afterward."""
         self._factors[name] = fn
         for weights in self._severity_weights.values():
             weights.setdefault(name, default_weight)
@@ -339,21 +279,24 @@ class DiversionSelector:
             "fuel_flow_lbs_hr":      max(state.get("fuel_flow_total_lbs_hr", 0.0), 0.0),
             "fuel_reserve_min_lbs":  state.get("fuel_reserve_min_lbs", 0.0),
             "required_rwy_ft":       _required_runway_ft(is_transport, vref_kts),
-            # Fixed, never relaxed — see the module-level note on
-            # _MIN_LANDABLE_RATIO. Landing distance is a physical limit, not
-            # a safety margin to trade away when the algorithm is struggling.
-            "min_landable_ratio":    _MIN_LANDABLE_RATIO,
+            "min_landable_ratio":    _MIN_LANDABLE_RATIO,  # fixed, never relaxed
             "prefer_larger_airport": prefer_larger,
             "notam_closed_airports": set(state.get("notam_closed_airports") or []),
             "notam_closed_runways":  state.get("notam_closed_runways") or {},
+            "origin_icao":           state.get("origin_icao"),
+            "destination_icao":      state.get("destination_icao"),
+            "origin_strength":       _clamp(
+                1.0 - state.get("time", 0.0) / _EARLY_FLIGHT_WINDOW_S, 0.0, 1.0
+            ) if state.get("origin_icao") else 0.0,
+            "go_around_strength": (
+                1.0 if "GO_AROUND" in active_conditions and state.get("destination_icao") else 0.0
+            ),
         }
 
         weights = self._severity_weights[severity]
         weight_total = sum(weights.values()) or 1.0
 
-        # Try full strictness first; if nothing survives, retry progressively
-        # looser tiers. NOTAM closures, runway length, and severity/weights
-        # never change — only the fuel and turn safety margins loosen.
+        # Full strictness first, then progressively looser fuel/turn tiers.
         for relax in _RELAXATION_LEVELS:
             ctx = dict(base_ctx)
             ctx["max_turn_deg"]         = _lerp(180.0, max_turn_deg, relax)
@@ -376,7 +319,7 @@ class DiversionSelector:
                 results.sort(key=lambda c: c["score"], reverse=True)
                 return results[:top_n]
 
-        return []  # even fully relaxed, nothing is physically reachable
+        return []  # even fully relaxed, nothing is reachable
 
     # ── per-candidate evaluation ─────────────────────────────────────────
 
@@ -395,11 +338,23 @@ class DiversionSelector:
         brg = _bearing_deg(ctx["lat"], ctx["lon"], lat, lon)
         turn = _turn_deg(ctx["heading_deg"], brg)
 
+        # Hard filter always uses the true angle — anchoring never bypasses it.
         if turn > ctx["max_turn_deg"]:
             return None  # can't physically turn far enough to get there
 
+        icao = apt.get("icao")
+        anchor_strength = 0.0
+        anchor = None
+        if icao and icao == ctx["origin_icao"] and ctx["origin_strength"] > anchor_strength:
+            anchor_strength, anchor = ctx["origin_strength"], "origin"
+        if icao and icao == ctx["destination_icao"] and ctx["go_around_strength"] > anchor_strength:
+            anchor_strength, anchor = ctx["go_around_strength"], "go_around"
+
+        turn_discount = 1.0 - anchor_strength * (1.0 - _ANCHOR_TURN_DISCOUNT)
+        turn_scoring = turn * turn_discount
+
         # Turning costs fuel/time — inflate the effective diversion distance.
-        turn_penalty = (turn / 180.0) * _TURN_FUEL_PENALTY_FRAC
+        turn_penalty = (turn_scoring / 180.0) * _TURN_FUEL_PENALTY_FRAC
         effective_distance_nm = distance_nm * (1.0 + turn_penalty)
 
         time_to_reach_hr = effective_distance_nm / ctx["groundspeed_kts"]
@@ -416,17 +371,20 @@ class DiversionSelector:
             return None  # too short to land under any reasonable technique
 
         candidate = {
-            "icao":            apt.get("icao"),
-            "iata":            apt.get("iata"),
-            "name":            apt.get("name"),
-            "airport_type":    apt.get("airport_type"),
-            "distance_nm":     round(distance_nm, 1),
-            "bearing_deg":     round(brg, 1),
-            "turn_deg":        round(turn, 1),
-            "eta_min":         round(time_to_reach_hr * 60.0, 1),
-            "best_runway_ft":  round(best_rwy_ft),
-            "fuel_margin_lbs": round(fuel_margin_lbs, 1),
-            "runway_closures": closed_rwy_ids,
+            "icao":             icao,
+            "iata":             apt.get("iata"),
+            "name":             apt.get("name"),
+            "airport_type":     apt.get("airport_type"),
+            "distance_nm":      round(distance_nm, 1),
+            "bearing_deg":      round(brg, 1),
+            "turn_deg":         round(turn, 1),           # true angle
+            "turn_deg_scoring": round(turn_scoring, 1),   # what counts against the score
+            "eta_min":          round(time_to_reach_hr * 60.0, 1),
+            "best_runway_ft":   round(best_rwy_ft),
+            "fuel_margin_lbs":  round(fuel_margin_lbs, 1),
+            "runway_closures":  closed_rwy_ids,
+            "anchor":           anchor,            # "origin" | "go_around" | None
+            "anchor_strength":  round(anchor_strength, 2),
         }
 
         factors = {name: _clamp(fn(candidate, ctx), 0.0, 1.0) for name, fn in self._factors.items()}
@@ -436,7 +394,13 @@ class DiversionSelector:
 
     @staticmethod
     def _explain(candidate) -> str:
-        bits = [f"{candidate['distance_nm']:.0f} nm", f"{candidate['turn_deg']:.0f}° turn"]
+        bits = []
+        if candidate["anchor"] == "origin":
+            bits.append("departure airport — briefed return-to-field option")
+        elif candidate["anchor"] == "go_around":
+            bits.append("go-around field — already established, no reason to look elsewhere")
+        bits.append(f"{candidate['distance_nm']:.0f} nm")
+        bits.append(f"{candidate['turn_deg']:.0f}° turn")
         if candidate["runway_closures"]:
             bits.append(f"alt RWY (closed: {', '.join(candidate['runway_closures'])})")
         bits.append(f"{candidate['fuel_margin_lbs']:.0f} lbs fuel margin at arrival")
@@ -450,13 +414,13 @@ class DiversionSelector:
         self.register_factor("capability", _factor_capability)
         self.register_factor("fuel_margin", _factor_fuel_margin)
         self.register_factor("availability", _factor_availability)
+        self.register_factor("familiarity", _factor_familiarity)
 
 
 _default_instance: DiversionSelector | None = None
 
 
 def default_selector() -> DiversionSelector:
-    """Return the process-wide default GRACE instance (lazily constructed)."""
     global _default_instance
     if _default_instance is None:
         _default_instance = DiversionSelector()
@@ -464,7 +428,4 @@ def default_selector() -> DiversionSelector:
 
 
 def select_diversion_airports(state: dict, airports: list, **kwargs) -> list:
-    """Run GRACE via the default instance. Convenience wrapper around
-    default_selector().select(...) for callers that don't need custom
-    factors/weights/condition modifiers."""
     return default_selector().select(state, airports, **kwargs)

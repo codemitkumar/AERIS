@@ -1020,6 +1020,8 @@ class FlightGenerator:
             "dist_to_dest_nm": round(
                 haversine_nm(self.lat, self.lon, self.dest["lat"], self.dest["lon"]), 1
             ),
+            "origin_icao":      self.origin["icao"],
+            "destination_icao": self.dest["icao"],
 
             # ── Fuel reserves summary ────────────────────────────────
             "fuel_reserve_min_lbs": round(

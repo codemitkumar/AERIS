@@ -1,24 +1,13 @@
 """Randomly closes runways / taxiways / whole airports for a simulation.
 
-Unlike the other injectors in emergencyInjector/, this doesn't degrade an
-aircraft system tick by tick — it seeds the flight with realistic NOTAM-style
-airport closures, the kind of thing a real crew would see in a pre-flight
-NOTAM briefing. Closures land on a mix of:
+Unlike the other injectors, this isn't a tick-by-tick system fault — it seeds
+the flight with NOTAM-style closures, like a real pre-flight briefing would.
+Closures mix "on path" airports (near the origin->destination route) and
+"scattered" ones (anywhere else, same as real-world NOTAMs unrelated to this
+particular flight). Each closure is a `notam_reader.Notam`, so the same
+reader that decodes real NOTAM text can decode these too.
 
-  - "on path" airports — the destination, or airports that sit within a
-    corridor around the direct origin→destination great-circle route
-    (i.e. plausible enroute diversion candidates), and
-  - "scattered" airports — anywhere else in the loaded airport dataset,
-    exactly like real NOTAMs that have nothing to do with this particular
-    flight but are active in the system regardless.
-
-Each closure is built as a `data.ingestion.notam_reader.Notam`, so the exact
-same reader that decodes real-world NOTAM text can decode these too.
-
-Terminal commands
-------------------
-    inject notam [count]
-    clear notam
+Terminal: inject notam [count] / clear notam
 """
 
 import math
@@ -77,9 +66,8 @@ def _format_raw(n: Notam) -> str:
 class NotamInjector:
     """Seeds the simulation with airport/runway/taxiway closure NOTAMs.
 
-    Closures are generated once — at the start of the flight, since real
-    NOTAMs are briefed pre-departure — then republished into `state` every
-    tick so any downstream consumer always sees the current closure list.
+    Generated once at flight start (real NOTAMs are briefed pre-departure),
+    then republished into `state` every tick.
     """
 
     NAME = "NOTAM Closures"
