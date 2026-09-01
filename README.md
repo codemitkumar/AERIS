@@ -1,4 +1,4 @@
-# AERIS, Aviation Emergency Response Intelligence System
+# AERIS: Aviation Emergency Response Intelligence System
 
 ## Abstract
 
