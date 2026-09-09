@@ -1,0 +1,1027 @@
+[
+  {
+    "scenario": "S1_normal_cruise",
+    "description": "Nominal cruise, no active conditions, LOW severity.",
+    "reference": "no single correct answer; used only for inter-algorithm agreement",
+    "GRACE": [
+      {
+        "icao": "KHUT",
+        "iata": "HUT",
+        "name": "HUTCHINSON RGNL",
+        "airport_type": "medium_airport",
+        "distance_nm": 7.7,
+        "bearing_deg": 58.9,
+        "turn_deg": 31.1,
+        "turn_deg_scoring": 31.1,
+        "eta_min": 1.0,
+        "best_runway_ft": 7003,
+        "fuel_margin_lbs": 16915.6,
+        "runway_closures": [],
+        "anchor": null,
+        "anchor_strength": 0.0,
+        "factors": {
+          "reachability": 0.9499619637629768,
+          "turn": 0.8272222222222222,
+          "capability": 1.0,
+          "fuel_margin": 0.84578,
+          "availability": 1.0,
+          "familiarity": 0.0
+        },
+        "reason": "8 nm, 31\u00b0 turn, 16916 lbs fuel margin at arrival",
+        "score": 0.8655,
+        "severity": "LOW",
+        "relaxed": false,
+        "relaxation_notes": []
+      },
+      {
+        "icao": "KEWK",
+        "iata": "EWK",
+        "name": "NEWTON-CITY-COUNTY",
+        "airport_type": "medium_airport",
+        "distance_nm": 34.4,
+        "bearing_deg": 84.1,
+        "turn_deg": 5.9,
+        "turn_deg_scoring": 5.9,
+        "eta_min": 4.5,
+        "best_runway_ft": 7003,
+        "fuel_margin_lbs": 16624.9,
+        "runway_closures": [],
+        "anchor": null,
+        "anchor_strength": 0.0,
+        "factors": {
+          "reachability": 0.7950634681739351,
+          "turn": 0.9672222222222222,
+          "capability": 1.0,
+          "fuel_margin": 0.8312450000000001,
+          "availability": 1.0,
+          "familiarity": 0.0
+        },
+        "reason": "34 nm, 6\u00b0 turn, 16625 lbs fuel margin at arrival",
+        "score": 0.8552,
+        "severity": "LOW",
+        "relaxed": false,
+        "relaxation_notes": []
+      },
+      {
+        "icao": "KBEC",
+        "iata": "BEC",
+        "name": "BEECH FACTORY",
+        "airport_type": "medium_airport",
+        "distance_nm": 41.5,
+        "bearing_deg": 116.0,
+        "turn_deg": 26.0,
+        "turn_deg_scoring": 26.0,
+        "eta_min": 5.5,
+        "best_runway_ft": 8001,
+        "fuel_margin_lbs": 16545.5,
+        "runway_closures": [],
+        "anchor": null,
+        "anchor_strength": 0.0,
+        "factors": {
+          "reachability": 0.7583072240616969,
+          "turn": 0.8555555555555556,
+          "capability": 1.0,
+          "fuel_margin": 0.827275,
+          "availability": 1.0,
+          "familiarity": 0.0
+        },
+        "reason": "42 nm, 26\u00b0 turn, 16546 lbs fuel margin at arrival",
+        "score": 0.8394,
+        "severity": "LOW",
+        "relaxed": false,
+        "relaxation_notes": []
+      }
+    ],
+    "Nearest": [
+      {
+        "icao": "KHUT",
+        "airport_type": "medium_airport",
+        "distance_nm": 7.7,
+        "turn_deg": 31.1,
+        "best_runway_ft": 7003,
+        "nominal_fuel_margin_lbs": 16916.3
+      },
+      {
+        "icao": "K9K8",
+        "airport_type": "small_airport",
+        "distance_nm": 20.7,
+        "turn_deg": 106.5,
+        "best_runway_ft": 4300,
+        "nominal_fuel_margin_lbs": 16774.8
+      },
+      {
+        "icao": "KLYO",
+        "airport_type": "small_airport",
+        "distance_nm": 23.1,
+        "turn_deg": 117.8,
+        "best_runway_ft": 4400,
+        "nominal_fuel_margin_lbs": 16748.9
+      }
+    ],
+    "Distance+Turn": [
+      {
+        "icao": "KHUT",
+        "airport_type": "medium_airport",
+        "distance_nm": 7.7,
+        "turn_deg": 31.1,
+        "best_runway_ft": 7003,
+        "nominal_fuel_margin_lbs": 16916.3,
+        "score_raw": 23.25
+      },
+      {
+        "icao": "KEWK",
+        "airport_type": "medium_airport",
+        "distance_nm": 34.4,
+        "turn_deg": 5.9,
+        "best_runway_ft": 7003,
+        "nominal_fuel_margin_lbs": 16625.6,
+        "score_raw": 37.35
+      },
+      {
+        "icao": "K47K",
+        "airport_type": "small_airport",
+        "distance_nm": 26.6,
+        "turn_deg": 28.3,
+        "best_runway_ft": 3405,
+        "nominal_fuel_margin_lbs": 16710.5,
+        "score_raw": 40.75
+      }
+    ],
+    "Fixed MCDA": [
+      {
+        "icao": "KHUT",
+        "airport_type": "medium_airport",
+        "distance_nm": 7.7,
+        "turn_deg": 31.1,
+        "best_runway_ft": 7003,
+        "nominal_fuel_margin_lbs": 16916.3,
+        "fuel_margin_lbs": 16916.3,
+        "score_raw": 0.9273053161820332
+      },
+      {
+        "icao": "KEWK",
+        "airport_type": "medium_airport",
+        "distance_nm": 34.4,
+        "turn_deg": 5.9,
+        "best_runway_ft": 7003,
+        "nominal_fuel_margin_lbs": 16625.6,
+        "fuel_margin_lbs": 16626.1,
+        "score_raw": 0.906659137070538
+      },
+      {
+        "icao": "KBEC",
+        "airport_type": "medium_airport",
+        "distance_nm": 41.5,
+        "turn_deg": 26.0,
+        "best_runway_ft": 8001,
+        "nominal_fuel_margin_lbs": 16548.8,
+        "fuel_margin_lbs": 16548.9,
+        "score_raw": 0.872720126155707
+      }
+    ]
+  },
+  {
+    "scenario": "S2_engine_failure",
+    "description": "ENGINE_FAILURE active (prefer larger/medium airport); nearest candidate is a small strip, a large airport is reachable only slightly farther.",
+    "reference": "large_airport or medium_airport preferred over the nearer small_airport",
+    "GRACE": [
+      {
+        "icao": "KFYG",
+        "iata": "FYG",
+        "name": "WASHINGTON RGNL",
+        "airport_type": "small_airport",
+        "distance_nm": 31.6,
+        "bearing_deg": 326.3,
+        "turn_deg": 9.9,
+        "turn_deg_scoring": 9.9,
+        "eta_min": 7.6,
+        "best_runway_ft": 5002,
+        "fuel_margin_lbs": 11302.4,
+        "runway_closures": [],
+        "anchor": null,
+        "anchor_strength": 0.0,
+        "factors": {
+          "reachability": 0.8100440365626839,
+          "turn": 0.945,
+          "capability": 0.741037037037037,
+          "fuel_margin": 0.7534933333333333,
+          "availability": 1.0,
+          "familiarity": 0.0
+        },
+        "reason": "32 nm, 10\u00b0 turn, 11302 lbs fuel margin at arrival",
+        "score": 0.7062,
+        "severity": "HIGH",
+        "relaxed": false,
+        "relaxation_notes": []
+      },
+      {
+        "icao": "KSUS",
+        "iata": "SUS",
+        "name": "SPIRIT OF ST LOUIS",
+        "airport_type": "large_airport",
+        "distance_nm": 30.8,
+        "bearing_deg": 357.2,
+        "turn_deg": 40.8,
+        "turn_deg_scoring": 40.8,
+        "eta_min": 7.5,
+        "best_runway_ft": 7485,
+        "fuel_margin_lbs": 11315.1,
+        "runway_closures": [],
+        "anchor": null,
+        "anchor_strength": 0.0,
+        "factors": {
+          "reachability": 0.8143758125591001,
+          "turn": 0.7733333333333333,
+          "capability": 1.0,
+          "fuel_margin": 0.75434,
+          "availability": 1.0,
+          "familiarity": 0.0
+        },
+        "reason": "31 nm, 41\u00b0 turn, 11315 lbs fuel margin at arrival",
+        "score": 0.6866,
+        "severity": "HIGH",
+        "relaxed": false,
+        "relaxation_notes": []
+      },
+      {
+        "icao": "KUUV",
+        "iata": "UUV",
+        "name": "SULLIVAN RGNL",
+        "airport_type": "small_airport",
+        "distance_nm": 26.2,
+        "bearing_deg": 281.2,
+        "turn_deg": 35.2,
+        "turn_deg_scoring": 35.2,
+        "eta_min": 6.3,
+        "best_runway_ft": 4500,
+        "fuel_margin_lbs": 11418.7,
+        "runway_closures": [],
+        "anchor": null,
+        "anchor_strength": 0.0,
+        "factors": {
+          "reachability": 0.8397368864178139,
+          "turn": 0.8044444444444444,
+          "capability": 0.6666666666666666,
+          "fuel_margin": 0.7612466666666667,
+          "availability": 1.0,
+          "familiarity": 0.0
+        },
+        "reason": "26 nm, 35\u00b0 turn, 11419 lbs fuel margin at arrival",
+        "score": 0.6767,
+        "severity": "HIGH",
+        "relaxed": false,
+        "relaxation_notes": []
+      }
+    ],
+    "Nearest": [
+      {
+        "icao": "K1BT",
+        "airport_type": "small_airport",
+        "distance_nm": 14.0,
+        "turn_deg": 145.1,
+        "best_runway_ft": 2800,
+        "nominal_fuel_margin_lbs": 11719.4
+      },
+      {
+        "icao": "K8WC",
+        "airport_type": "small_airport",
+        "distance_nm": 14.3,
+        "turn_deg": 114.7,
+        "best_runway_ft": 4000,
+        "nominal_fuel_margin_lbs": 11714.7
+      },
+      {
+        "icao": "KFAM",
+        "airport_type": "medium_airport",
+        "distance_nm": 25.1,
+        "turn_deg": 157.7,
+        "best_runway_ft": 4323,
+        "nominal_fuel_margin_lbs": 11498.9
+      }
+    ],
+    "Distance+Turn": [
+      {
+        "icao": "KFYG",
+        "airport_type": "small_airport",
+        "distance_nm": 31.6,
+        "turn_deg": 9.9,
+        "best_runway_ft": 5002,
+        "nominal_fuel_margin_lbs": 11367.6,
+        "score_raw": 36.550000000000004
+      },
+      {
+        "icao": "KUUV",
+        "airport_type": "small_airport",
+        "distance_nm": 26.2,
+        "turn_deg": 35.2,
+        "best_runway_ft": 4500,
+        "nominal_fuel_margin_lbs": 11476.6,
+        "score_raw": 43.8
+      },
+      {
+        "icao": "KSUS",
+        "airport_type": "large_airport",
+        "distance_nm": 30.8,
+        "turn_deg": 40.8,
+        "best_runway_ft": 7485,
+        "nominal_fuel_margin_lbs": 11384.3,
+        "score_raw": 51.2
+      }
+    ],
+    "Fixed MCDA": [
+      {
+        "icao": "KSUS",
+        "airport_type": "large_airport",
+        "distance_nm": 30.8,
+        "turn_deg": 40.8,
+        "best_runway_ft": 7485,
+        "nominal_fuel_margin_lbs": 11384.3,
+        "fuel_margin_lbs": 11322.4,
+        "score_raw": 0.8622034104343966
+      },
+      {
+        "icao": "KFYG",
+        "airport_type": "small_airport",
+        "distance_nm": 31.6,
+        "turn_deg": 9.9,
+        "best_runway_ft": 5002,
+        "nominal_fuel_margin_lbs": 11367.6,
+        "fuel_margin_lbs": 11304.8,
+        "score_raw": 0.8303204702280643
+      },
+      {
+        "icao": "KSTL",
+        "airport_type": "large_airport",
+        "distance_nm": 37.8,
+        "turn_deg": 61.6,
+        "best_runway_ft": 11020,
+        "nominal_fuel_margin_lbs": 11243.6,
+        "fuel_margin_lbs": 11168.4,
+        "score_raw": 0.8264129769762394
+      }
+    ]
+  },
+  {
+    "scenario": "S3_fuel_leak",
+    "description": "FUEL_LEAK active with fuel already close to reserve; worst-case (2x) burn should sharply cut the reachable set.",
+    "reference": "no candidate with negative worst-case fuel margin",
+    "GRACE": [
+      {
+        "icao": "KHUT",
+        "iata": "HUT",
+        "name": "HUTCHINSON RGNL",
+        "airport_type": "medium_airport",
+        "distance_nm": 7.7,
+        "bearing_deg": 58.9,
+        "turn_deg": 31.1,
+        "turn_deg_scoring": 31.1,
+        "eta_min": 1.9,
+        "best_runway_ft": 7003,
+        "fuel_margin_lbs": 36.3,
+        "runway_closures": [],
+        "anchor": null,
+        "anchor_strength": 0.0,
+        "factors": {
+          "reachability": 0.9499619637629768,
+          "turn": 0.8272222222222222,
+          "capability": 1.0,
+          "fuel_margin": 0.0226875,
+          "availability": 1.0,
+          "familiarity": 0.0
+        },
+        "reason": "8 nm, 31\u00b0 turn, 36 lbs fuel margin at arrival",
+        "score": 0.6899,
+        "severity": "HIGH",
+        "relaxed": true,
+        "relaxation_notes": [
+          "worst-case fuel burn relaxed 2.00x \u2192 1.70x",
+          "fuel reserve buffer relaxed 1.15x \u2192 1.10x"
+        ]
+      }
+    ],
+    "Nearest": [
+      {
+        "icao": "KHUT",
+        "airport_type": "medium_airport",
+        "distance_nm": 7.7,
+        "turn_deg": 31.1,
+        "best_runway_ft": 7003,
+        "nominal_fuel_margin_lbs": 261.4
+      },
+      {
+        "icao": "K9K8",
+        "airport_type": "small_airport",
+        "distance_nm": 20.7,
+        "turn_deg": 106.5,
+        "best_runway_ft": 4300,
+        "nominal_fuel_margin_lbs": 27.0
+      },
+      {
+        "icao": "KLYO",
+        "airport_type": "small_airport",
+        "distance_nm": 23.1,
+        "turn_deg": 117.8,
+        "best_runway_ft": 4400,
+        "nominal_fuel_margin_lbs": -15.8
+      }
+    ],
+    "Distance+Turn": [
+      {
+        "icao": "KHUT",
+        "airport_type": "medium_airport",
+        "distance_nm": 7.7,
+        "turn_deg": 31.1,
+        "best_runway_ft": 7003,
+        "nominal_fuel_margin_lbs": 261.4,
+        "score_raw": 23.25
+      },
+      {
+        "icao": "K9K8",
+        "airport_type": "small_airport",
+        "distance_nm": 20.7,
+        "turn_deg": 106.5,
+        "best_runway_ft": 4300,
+        "nominal_fuel_margin_lbs": 27.0,
+        "score_raw": 73.95
+      }
+    ],
+    "Fixed MCDA": []
+  },
+  {
+    "scenario": "S4_go_around",
+    "description": "GO_AROUND active near KICT; destination should be strongly preferred despite a nontrivial missed-approach turn.",
+    "reference": "KICT",
+    "GRACE": [
+      {
+        "icao": "KICT",
+        "iata": "ICT",
+        "name": "WICHITA DWIGHT D EISENHOWER NTL",
+        "airport_type": "large_airport",
+        "distance_nm": 3.1,
+        "bearing_deg": 162.4,
+        "turn_deg": 107.6,
+        "turn_deg_scoring": 16.1,
+        "eta_min": 1.2,
+        "best_runway_ft": 10302,
+        "fuel_margin_lbs": 5411.0,
+        "runway_closures": [],
+        "anchor": "go_around",
+        "anchor_strength": 1.0,
+        "factors": {
+          "reachability": 0.9795454252980814,
+          "turn": 0.9105555555555556,
+          "capability": 1.0,
+          "fuel_margin": 0.676375,
+          "availability": 1.0,
+          "familiarity": 1.0
+        },
+        "reason": "go-around field \u2014 already established, no reason to look elsewhere, 3 nm, 108\u00b0 turn, 5411 lbs fuel margin at arrival",
+        "score": 0.9369,
+        "severity": "MODERATE",
+        "relaxed": false,
+        "relaxation_notes": []
+      },
+      {
+        "icao": "KHUT",
+        "iata": "HUT",
+        "name": "HUTCHINSON RGNL",
+        "airport_type": "medium_airport",
+        "distance_nm": 29.3,
+        "bearing_deg": 318.8,
+        "turn_deg": 48.8,
+        "turn_deg_scoring": 48.8,
+        "eta_min": 11.1,
+        "best_runway_ft": 7003,
+        "fuel_margin_lbs": 4665.9,
+        "runway_closures": [],
+        "anchor": null,
+        "anchor_strength": 0.0,
+        "factors": {
+          "reachability": 0.8225604255446242,
+          "turn": 0.7288888888888889,
+          "capability": 1.0,
+          "fuel_margin": 0.5832375,
+          "availability": 1.0,
+          "familiarity": 0.0
+        },
+        "reason": "29 nm, 49\u00b0 turn, 4666 lbs fuel margin at arrival",
+        "score": 0.7218,
+        "severity": "MODERATE",
+        "relaxed": false,
+        "relaxation_notes": []
+      },
+      {
+        "icao": "K9K8",
+        "iata": "9K8",
+        "name": "KINGMAN/CLYDE CESSNA FLD",
+        "airport_type": "small_airport",
+        "distance_nm": 31.9,
+        "bearing_deg": 266.9,
+        "turn_deg": 3.1,
+        "turn_deg_scoring": 3.1,
+        "eta_min": 12.0,
+        "best_runway_ft": 4300,
+        "fuel_margin_lbs": 4601.2,
+        "runway_closures": [],
+        "anchor": null,
+        "anchor_strength": 0.0,
+        "factors": {
+          "reachability": 0.8084255674981128,
+          "turn": 0.9827777777777778,
+          "capability": 0.6370370370370371,
+          "fuel_margin": 0.5751499999999999,
+          "availability": 1.0,
+          "familiarity": 0.0
+        },
+        "reason": "32 nm, 3\u00b0 turn, 4601 lbs fuel margin at arrival",
+        "score": 0.6823,
+        "severity": "MODERATE",
+        "relaxed": false,
+        "relaxation_notes": []
+      }
+    ],
+    "Nearest": [
+      {
+        "icao": "KICT",
+        "airport_type": "large_airport",
+        "distance_nm": 3.1,
+        "turn_deg": 107.6,
+        "best_runway_ft": 10302,
+        "nominal_fuel_margin_lbs": 5411.4
+      },
+      {
+        "icao": "K71K",
+        "airport_type": "small_airport",
+        "distance_nm": 4.6,
+        "turn_deg": 136.4,
+        "best_runway_ft": 2520,
+        "nominal_fuel_margin_lbs": 5372.0
+      },
+      {
+        "icao": "KCEA",
+        "airport_type": "small_airport",
+        "distance_nm": 10.1,
+        "turn_deg": 162.3,
+        "best_runway_ft": 3873,
+        "nominal_fuel_margin_lbs": 5215.9
+      }
+    ],
+    "Distance+Turn": [
+      {
+        "icao": "K9K8",
+        "airport_type": "small_airport",
+        "distance_nm": 31.9,
+        "turn_deg": 3.1,
+        "best_runway_ft": 4300,
+        "nominal_fuel_margin_lbs": 4602.0,
+        "score_raw": 33.449999999999996
+      },
+      {
+        "icao": "KHUT",
+        "airport_type": "medium_airport",
+        "distance_nm": 29.3,
+        "turn_deg": 48.8,
+        "best_runway_ft": 7003,
+        "nominal_fuel_margin_lbs": 4677.0,
+        "score_raw": 53.7
+      },
+      {
+        "icao": "KICT",
+        "airport_type": "large_airport",
+        "distance_nm": 3.1,
+        "turn_deg": 107.6,
+        "best_runway_ft": 10302,
+        "nominal_fuel_margin_lbs": 5411.4,
+        "score_raw": 56.9
+      }
+    ],
+    "Fixed MCDA": [
+      {
+        "icao": "KHUT",
+        "airport_type": "medium_airport",
+        "distance_nm": 29.3,
+        "turn_deg": 48.8,
+        "best_runway_ft": 7003,
+        "nominal_fuel_margin_lbs": 4677.0,
+        "fuel_margin_lbs": 4675.9,
+        "score_raw": 0.8302197335661651
+      },
+      {
+        "icao": "KICT",
+        "airport_type": "large_airport",
+        "distance_nm": 3.1,
+        "turn_deg": 107.6,
+        "best_runway_ft": 10302,
+        "nominal_fuel_margin_lbs": 5411.4,
+        "fuel_margin_lbs": 5412.8,
+        "score_raw": 0.8257983064088689
+      },
+      {
+        "icao": "K9K8",
+        "airport_type": "small_airport",
+        "distance_nm": 31.9,
+        "turn_deg": 3.1,
+        "best_runway_ft": 4300,
+        "nominal_fuel_margin_lbs": 4602.0,
+        "fuel_margin_lbs": 4602.8,
+        "score_raw": 0.7846452194392487
+      }
+    ]
+  },
+  {
+    "scenario": "S5_early_departure",
+    "description": "Emergency 3 minutes after KHUT departure; origin is nearly directly behind the aircraft.",
+    "reference": "KHUT",
+    "GRACE": [
+      {
+        "icao": "KHUT",
+        "iata": "HUT",
+        "name": "HUTCHINSON RGNL",
+        "airport_type": "medium_airport",
+        "distance_nm": 3.5,
+        "bearing_deg": 234.6,
+        "turn_deg": 144.6,
+        "turn_deg_scoring": 40.1,
+        "eta_min": 0.9,
+        "best_runway_ft": 7003,
+        "fuel_margin_lbs": 12436.2,
+        "runway_closures": [],
+        "anchor": "origin",
+        "anchor_strength": 0.85,
+        "factors": {
+          "reachability": 0.9769367838983476,
+          "turn": 0.7772222222222223,
+          "capability": 1.0,
+          "fuel_margin": 0.82908,
+          "availability": 1.0,
+          "familiarity": 0.85
+        },
+        "reason": "departure airport \u2014 briefed return-to-field option, 4 nm, 145\u00b0 turn, 12436 lbs fuel margin at arrival",
+        "score": 0.8964,
+        "severity": "HIGH",
+        "relaxed": false,
+        "relaxation_notes": []
+      },
+      {
+        "icao": "KEWK",
+        "iata": "EWK",
+        "name": "NEWTON-CITY-COUNTY",
+        "airport_type": "medium_airport",
+        "distance_nm": 24.9,
+        "bearing_deg": 95.8,
+        "turn_deg": 5.8,
+        "turn_deg_scoring": 5.8,
+        "eta_min": 6.0,
+        "best_runway_ft": 7003,
+        "fuel_margin_lbs": 12050.5,
+        "runway_closures": [],
+        "anchor": null,
+        "anchor_strength": 0.0,
+        "factors": {
+          "reachability": 0.8470462341893997,
+          "turn": 0.9677777777777777,
+          "capability": 1.0,
+          "fuel_margin": 0.8033666666666667,
+          "availability": 1.0,
+          "familiarity": 0.0
+        },
+        "reason": "25 nm, 6\u00b0 turn, 12050 lbs fuel margin at arrival",
+        "score": 0.7515,
+        "severity": "HIGH",
+        "relaxed": false,
+        "relaxation_notes": []
+      },
+      {
+        "icao": "K47K",
+        "iata": "47K",
+        "name": "MOUNDRIDGE MUNI",
+        "airport_type": "small_airport",
+        "distance_nm": 15.5,
+        "bearing_deg": 64.9,
+        "turn_deg": 25.1,
+        "turn_deg_scoring": 25.1,
+        "eta_min": 3.7,
+        "best_runway_ft": 3405,
+        "fuel_margin_lbs": 12219.3,
+        "runway_closures": [],
+        "anchor": null,
+        "anchor_strength": 0.0,
+        "factors": {
+          "reachability": 0.9018263146029529,
+          "turn": 0.8605555555555555,
+          "capability": 0.5044444444444445,
+          "fuel_margin": 0.8146199999999999,
+          "availability": 1.0,
+          "familiarity": 0.0
+        },
+        "reason": "16 nm, 25\u00b0 turn, 12219 lbs fuel margin at arrival",
+        "score": 0.7049,
+        "severity": "HIGH",
+        "relaxed": false,
+        "relaxation_notes": []
+      }
+    ],
+    "Nearest": [
+      {
+        "icao": "KHUT",
+        "airport_type": "medium_airport",
+        "distance_nm": 3.5,
+        "turn_deg": 144.6,
+        "best_runway_ft": 7003,
+        "nominal_fuel_margin_lbs": 12436.9
+      },
+      {
+        "icao": "K47K",
+        "airport_type": "small_airport",
+        "distance_nm": 15.5,
+        "turn_deg": 25.1,
+        "best_runway_ft": 3405,
+        "nominal_fuel_margin_lbs": 12221.2
+      },
+      {
+        "icao": "KMPR",
+        "airport_type": "small_airport",
+        "distance_nm": 16.0,
+        "turn_deg": 71.3,
+        "best_runway_ft": 5503,
+        "nominal_fuel_margin_lbs": 12212.0
+      }
+    ],
+    "Distance+Turn": [
+      {
+        "icao": "KEWK",
+        "airport_type": "medium_airport",
+        "distance_nm": 24.9,
+        "turn_deg": 5.8,
+        "best_runway_ft": 7003,
+        "nominal_fuel_margin_lbs": 12051.2,
+        "score_raw": 27.799999999999997
+      },
+      {
+        "icao": "K47K",
+        "airport_type": "small_airport",
+        "distance_nm": 15.5,
+        "turn_deg": 25.1,
+        "best_runway_ft": 3405,
+        "nominal_fuel_margin_lbs": 12221.2,
+        "score_raw": 28.05
+      },
+      {
+        "icao": "KM66",
+        "airport_type": "small_airport",
+        "distance_nm": 31.2,
+        "turn_deg": 27.9,
+        "best_runway_ft": 3229,
+        "nominal_fuel_margin_lbs": 11938.0,
+        "score_raw": 45.15
+      }
+    ],
+    "Fixed MCDA": [
+      {
+        "icao": "KEWK",
+        "airport_type": "medium_airport",
+        "distance_nm": 24.9,
+        "turn_deg": 5.8,
+        "best_runway_ft": 7003,
+        "nominal_fuel_margin_lbs": 12051.2,
+        "fuel_margin_lbs": 12051.8,
+        "score_raw": 0.9181874258123754
+      },
+      {
+        "icao": "KBEC",
+        "airport_type": "medium_airport",
+        "distance_nm": 36.9,
+        "turn_deg": 41.2,
+        "best_runway_ft": 8001,
+        "nominal_fuel_margin_lbs": 11835.5,
+        "fuel_margin_lbs": 11835.8,
+        "score_raw": 0.8571568896998654
+      },
+      {
+        "icao": "KICT",
+        "airport_type": "large_airport",
+        "distance_nm": 32.1,
+        "turn_deg": 57.1,
+        "best_runway_ft": 10302,
+        "nominal_fuel_margin_lbs": 11921.6,
+        "fuel_margin_lbs": 11922.2,
+        "score_raw": 0.8479820710623599
+      }
+    ]
+  },
+  {
+    "scenario": "S6_severe_turn",
+    "description": "DIRECTIONAL_CONTROL_LOSS active (45 deg turn budget); every candidate within realistic range requires >45 deg at full strictness, forcing relaxation.",
+    "reference": "any candidate satisfying the relaxed turn budget (not empty)",
+    "GRACE": [
+      {
+        "icao": "K3F6",
+        "iata": "3F6",
+        "name": "DAN E RICHARDS MUNI",
+        "airport_type": "small_airport",
+        "distance_nm": 83.8,
+        "bearing_deg": 119.0,
+        "turn_deg": 3.4,
+        "turn_deg_scoring": 3.4,
+        "eta_min": 20.1,
+        "best_runway_ft": 3186,
+        "fuel_margin_lbs": 10990.6,
+        "runway_closures": [],
+        "anchor": null,
+        "anchor_strength": 0.0,
+        "factors": {
+          "reachability": 0.5719711839010748,
+          "turn": 0.9244444444444444,
+          "capability": 0.472,
+          "fuel_margin": 0.7327066666666667,
+          "availability": 1.0,
+          "familiarity": 0.0
+        },
+        "reason": "84 nm, 3\u00b0 turn, 10991 lbs fuel margin at arrival",
+        "score": 0.5877,
+        "severity": "HIGH",
+        "relaxed": false,
+        "relaxation_notes": []
+      },
+      {
+        "icao": "KCDS",
+        "iata": "CDS",
+        "name": "CHILDRESS MUNI",
+        "airport_type": "small_airport",
+        "distance_nm": 74.4,
+        "bearing_deg": 102.6,
+        "turn_deg": 19.8,
+        "turn_deg_scoring": 19.8,
+        "eta_min": 18.0,
+        "best_runway_ft": 5949,
+        "fuel_margin_lbs": 11153.5,
+        "runway_closures": [],
+        "anchor": null,
+        "anchor_strength": 0.0,
+        "factors": {
+          "reachability": 0.6089616410728969,
+          "turn": 0.56,
+          "capability": 0.8813333333333334,
+          "fuel_margin": 0.7435666666666667,
+          "availability": 1.0,
+          "familiarity": 0.0
+        },
+        "reason": "74 nm, 20\u00b0 turn, 11154 lbs fuel margin at arrival",
+        "score": 0.5454,
+        "severity": "HIGH",
+        "relaxed": false,
+        "relaxation_notes": []
+      },
+      {
+        "icao": "K37F",
+        "iata": "37F",
+        "name": "MUNDAY MUNI",
+        "airport_type": "small_airport",
+        "distance_nm": 131.2,
+        "bearing_deg": 124.1,
+        "turn_deg": 1.7,
+        "turn_deg_scoring": 1.7,
+        "eta_min": 31.5,
+        "best_runway_ft": 3200,
+        "fuel_margin_lbs": 10137.8,
+        "runway_closures": [],
+        "anchor": null,
+        "anchor_strength": 0.0,
+        "factors": {
+          "reachability": 0.4170009968466425,
+          "turn": 0.9622222222222222,
+          "capability": 0.4740740740740741,
+          "fuel_margin": 0.6758533333333333,
+          "availability": 1.0,
+          "familiarity": 0.0
+        },
+        "reason": "131 nm, 2\u00b0 turn, 10138 lbs fuel margin at arrival",
+        "score": 0.5344,
+        "severity": "HIGH",
+        "relaxed": false,
+        "relaxation_notes": []
+      }
+    ],
+    "Nearest": [
+      {
+        "icao": "KI06",
+        "airport_type": "small_airport",
+        "distance_nm": 8.9,
+        "turn_deg": 66.3,
+        "best_runway_ft": 4876,
+        "nominal_fuel_margin_lbs": 12339.2
+      },
+      {
+        "icao": "KH81",
+        "airport_type": "medium_airport",
+        "distance_nm": 22.1,
+        "turn_deg": 122.7,
+        "best_runway_ft": 6015,
+        "nominal_fuel_margin_lbs": 12102.8
+      },
+      {
+        "icao": "KTDW",
+        "airport_type": "medium_airport",
+        "distance_nm": 27.6,
+        "turn_deg": 129.8,
+        "best_runway_ft": 5098,
+        "nominal_fuel_margin_lbs": 12003.1
+      }
+    ],
+    "Distance+Turn": [
+      {
+        "icao": "KI06",
+        "airport_type": "small_airport",
+        "distance_nm": 8.9,
+        "turn_deg": 66.3,
+        "best_runway_ft": 4876,
+        "nominal_fuel_margin_lbs": 12339.2,
+        "score_raw": 42.05
+      },
+      {
+        "icao": "KPVW",
+        "airport_type": "medium_airport",
+        "distance_nm": 32.8,
+        "turn_deg": 54.4,
+        "best_runway_ft": 5997,
+        "nominal_fuel_margin_lbs": 11909.3,
+        "score_raw": 60.0
+      },
+      {
+        "icao": "K41F",
+        "airport_type": "small_airport",
+        "distance_nm": 47.6,
+        "turn_deg": 31.3,
+        "best_runway_ft": 4600,
+        "nominal_fuel_margin_lbs": 11642.3,
+        "score_raw": 63.25
+      }
+    ],
+    "Fixed MCDA": [
+      {
+        "icao": "KCDS",
+        "airport_type": "small_airport",
+        "distance_nm": 74.4,
+        "turn_deg": 19.8,
+        "best_runway_ft": 5949,
+        "nominal_fuel_margin_lbs": 11160.9,
+        "fuel_margin_lbs": 11160.8,
+        "score_raw": 0.7266298256552023
+      },
+      {
+        "icao": "KRPH",
+        "airport_type": "medium_airport",
+        "distance_nm": 186.2,
+        "turn_deg": 2.2,
+        "best_runway_ft": 5000,
+        "nominal_fuel_margin_lbs": 9148.5,
+        "fuel_margin_lbs": 9148.4,
+        "score_raw": 0.6910909962367858
+      },
+      {
+        "icao": "K3F6",
+        "airport_type": "small_airport",
+        "distance_nm": 83.8,
+        "turn_deg": 3.4,
+        "best_runway_ft": 3186,
+        "nominal_fuel_margin_lbs": 10992.0,
+        "fuel_margin_lbs": 10991.6,
+        "score_raw": 0.6843962440592113
+      }
+    ]
+  },
+  {
+    "scenario": "S7_no_reachable",
+    "description": "Mid-Atlantic position (far outside the FAA NASR dataset footprint), fuel effectively exhausted.",
+    "reference": "None (no feasible candidate exists)",
+    "GRACE": [],
+    "Nearest": [
+      {
+        "icao": "TXKF",
+        "airport_type": "small_airport",
+        "distance_nm": 1239.9,
+        "turn_deg": 179.7,
+        "best_runway_ft": 9706,
+        "nominal_fuel_margin_lbs": -16472.2
+      },
+      {
+        "icao": "CYSU",
+        "airport_type": "small_airport",
+        "distance_nm": 1276.0,
+        "turn_deg": 140.2,
+        "best_runway_ft": 8000,
+        "nominal_fuel_margin_lbs": -16864.5
+      },
+      {
+        "icao": "CYSJ",
+        "airport_type": "small_airport",
+        "distance_nm": 1331.5,
+        "turn_deg": 144.4,
+        "best_runway_ft": 7000,
+        "nominal_fuel_margin_lbs": -17468.2
+      }
+    ],
+    "Distance+Turn": [],
+    "Fixed MCDA": []
+  }
+]

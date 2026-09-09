@@ -135,10 +135,11 @@ _CRITICAL_PHASES = frozenset({
 # ─────────────────────────────────────────────
 class FlightGenerator:
 
-    def __init__(self, perf, airport_csv=None, dt=1/30, emergency_fn=None):
+    def __init__(self, perf, airport_csv=None, dt=1/30, emergency_fn=None, region="US"):
         self.perf         = perf
         self.dt           = dt
         self.emergency_fn = emergency_fn
+        self.region        = region
 
         self.time  = 0.0
         self.phase = Phase.GROUND_ROLL
@@ -294,6 +295,9 @@ class FlightGenerator:
     # ── Airport helpers ────────────────────────────────────────────────
     def _load_airports(self, path=None):
         if path is None:
+            if self.region == "EU":
+                from data.ingestion.eurocontrol_airport_loader import load_airports
+                return load_airports()
             from data.ingestion.faa_airport_loader import load_airports
             return load_airports()
         # Legacy fallback: OurAirports-format CSV

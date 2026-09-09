@@ -1,3 +1,6 @@
 __pycache__/
 *.py[cod]
 *.pyo
+
+# EUROCONTROL R&D dataset (R&D-use-only license, must not be redistributed)
+data/adrrData/

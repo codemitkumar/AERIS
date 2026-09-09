@@ -3,11 +3,21 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 // ─── Projection ─────────────────────────────────────────────────────────────
 // Flat equirectangular chart projection (not a globe) — x-scale corrected by
 // cos(refLat) around a fixed CONUS reference point. Accurate enough for a
-// stylized ATC/sectional-style chart; not a precision nav projection.
+// stylized ATC/sectional-style chart; not a precision nav projection. One
+// unified airspace/airport dataset (FAA + EUROCONTROL-derived) is always
+// loaded together — European airports simply render off to the side of the
+// default view, reachable by panning/zooming, same map either way.
 const DEG2RAD = Math.PI / 180;
-const REF_LAT = 39.5;   // geographic-ish center of the contiguous US
-const REF_LON = -98.5;
-const COS_REF_LAT = Math.cos(REF_LAT * DEG2RAD);
+const DEFAULT_REF_LAT = 39.5;   // geographic-ish center of the contiguous US
+const DEFAULT_REF_LON = -98.5;
+const COS_REF_LAT = Math.cos(DEFAULT_REF_LAT * DEG2RAD);
+
+function project(lat, lon) {
+  return {
+    x: (lon - DEFAULT_REF_LON) * COS_REF_LAT,
+    y: DEFAULT_REF_LAT - lat,
+  };
+}
 
 const CONUS_STATES = new Set([
   "AL","AZ","AR","CA","CO","CT","DE","DC","FL","GA","ID","IL","IN","IA","KS",
@@ -15,13 +25,6 @@ const CONUS_STATES = new Set([
   "NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA",
   "WA","WV","WI","WY",
 ]);
-
-function project(lat, lon) {
-  return {
-    x: (lon - REF_LON) * COS_REF_LAT,
-    y: REF_LAT - lat,
-  };
-}
 
 const TYPE_COLOR = {
   large_airport:  "#40e0ff",
@@ -45,18 +48,28 @@ const LOD_ALL_DOTS   = 60;    // effScale: below this only large/medium shown
 const LOD_ELEV_LABEL = 250;   // effScale: show boxed elevation + ICAO
 const LOD_RUNWAYS    = 1500;  // effScale: show true-scale runway lines
 
+// One unified airport set: FAA NASR (has real runway geometry) merged with
+// the EUROCONTROL-derived set (real traffic-based positions, no runway
+// data — see eurocontrol_airport_loader.py's docstring). Where the same
+// ICAO appears in both (common for transatlantic flights' US endpoints),
+// the FAA entry wins since it carries verified runway geometry.
 function useAirports() {
   const [airports, setAirports] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetch("/data/airports.json")
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then((raw) => {
-        const withProj = raw.map((a) => {
+    let cancelled = false;
+    Promise.all([
+      fetch("/data/airports.json").then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))),
+      fetch("/data/eu_airports.json").then((r) => (r.ok ? r.json() : [])).catch(() => []),
+    ])
+      .then(([faa, eu]) => {
+        if (cancelled) return;
+        const byIcao = new Map();
+        for (const a of eu) byIcao.set(a.icao, a);
+        for (const a of faa) byIcao.set(a.icao, a); // FAA wins on overlap
+
+        const withProj = Array.from(byIcao.values()).map((a) => {
           const p = project(a.lat, a.lon);
           return {
             ...a,
@@ -70,10 +83,106 @@ function useAirports() {
         });
         setAirports(withProj);
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => { if (!cancelled) setError(e.message); });
+    return () => { cancelled = true; };
   }, []);
 
   return { airports, error };
+}
+
+// World landmass outline (coastlines), Natural Earth 110m resolution —
+// public domain, no attribution required.
+function useWorldLand() {
+  const [rawLand, setRawLand] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/data/world_land.json")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((raw) => { if (!cancelled) setRawLand(raw); })
+      .catch(() => { if (!cancelled) setRawLand(null); });
+    return () => { cancelled = true; };
+  }, []);
+
+  return useMemo(() => {
+    if (!rawLand) return null;
+    return rawLand.map((rings) => rings.map((ring) => ring.map(([lat, lon]) => project(lat, lon))));
+  }, [rawLand]);
+}
+
+// Real FIR/UIR airspace boundary polygons (EUROCONTROL-derived) — part of
+// the same unified airspace view as the airports, always loaded.
+function useFirPolygons() {
+  const [firPolygons, setFirPolygons] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/data/fir_polygons.json")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((raw) => {
+        if (cancelled) return;
+        const projected = Object.entries(raw).map(([id, poly]) => ({
+          id,
+          minFl: poly.min_fl,
+          maxFl: poly.max_fl,
+          _pts: poly.points.map(([lat, lon]) => project(lat, lon)),
+        }));
+        setFirPolygons(projected);
+      })
+      .catch(() => { if (!cancelled) setFirPolygons(null); });
+    return () => { cancelled = true; };
+  }, []);
+
+  return firPolygons;
+}
+
+// Real published ATS route network (EUROCONTROL-derived) — used to draw a
+// realistic route line for any flight whose endpoints are near one, always
+// loaded (not gated behind a region choice).
+function useRoutes() {
+  const [routes, setRoutes] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/data/routes.json")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((raw) => { if (!cancelled) setRoutes(raw); })
+      .catch(() => { if (!cancelled) setRoutes(null); });
+    return () => { cancelled = true; };
+  }, []);
+
+  return routes;
+}
+
+// Real-airway lookup: finds a published route whose endpoints roughly match
+// the requested origin/destination, for a more realistic route line than a
+// straight great-circle — nearest-endpoint heuristic (not a routing solver),
+// mirroring eurocontrol_loader.nearest_route_between in the Python engine.
+function nearestRouteBetween(lat1, lon1, lat2, lon2, routes, maxEndpointNm = 120) {
+  if (!routes) return null;
+  let best = null;
+  let bestCost = maxEndpointNm * 2;
+  for (const wps of Object.values(routes)) {
+    if (wps.length < 2) continue;
+    const start = wps[0], end = wps[wps.length - 1];
+
+    const dFwd = _haversineNm(lat1, lon1, start[0], start[1]) + _haversineNm(lat2, lon2, end[0], end[1]);
+    if (dFwd < bestCost) { bestCost = dFwd; best = wps; }
+
+    const dRev = _haversineNm(lat1, lon1, end[0], end[1]) + _haversineNm(lat2, lon2, start[0], start[1]);
+    if (dRev < bestCost) { bestCost = dRev; best = [...wps].reverse(); }
+  }
+  return best;
+}
+
+function _haversineNm(lat1, lon1, lat2, lon2) {
+  const R = 3440.065;
+  const toRad = (d) => d * DEG2RAD;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.asin(Math.sqrt(a));
 }
 
 // ─── Live flight (WS) ───────────────────────────────────────────────────────
@@ -187,6 +296,9 @@ function screenToWorld(sx, sy, view, base, w, h) {
 // ─── Main screen ────────────────────────────────────────────────────────────
 export default function SimulateMap() {
   const { airports, error } = useAirports();
+  const worldLand = useWorldLand();
+  const firPolygons = useFirPolygons();
+  const routes = useRoutes();
   const { connected, meta, flight, notams, diversion } = useLiveFlight();
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -207,6 +319,17 @@ export default function SimulateMap() {
     () => (airports && meta ? airports.find((a) => a.icao === meta.destination_icao) : null),
     [airports, meta]
   );
+
+  // Real published-airway route line — falls back to the straight
+  // origin->destination line drawn in draw() when no real route's
+  // endpoints are close enough to this flight's origin/destination.
+  const routeLine = useMemo(() => {
+    if (!routes || !originAirport || !destAirport) return null;
+    const wps = nearestRouteBetween(
+      originAirport.lat, originAirport.lon, destAirport.lat, destAirport.lon, routes
+    );
+    return wps ? wps.map(([lat, lon]) => project(lat, lon)) : null;
+  }, [routes, originAirport, destAirport]);
 
   const [hovered, setHovered] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -244,6 +367,26 @@ export default function SimulateMap() {
     ctx.fillStyle = "#040a10";
     ctx.fillRect(0, 0, w, h);
 
+    // World landmass outline (coastlines) — drawn under the graticule/
+    // airports so it reads as a basemap, not a foreground element.
+    if (worldLand) {
+      ctx.fillStyle = "#0a1826";
+      ctx.strokeStyle = "rgba(70,120,165,0.55)";
+      ctx.lineWidth = 1;
+      for (const rings of worldLand) {
+        ctx.beginPath();
+        for (const ring of rings) {
+          ring.forEach((p, i) => {
+            const { sx, sy } = worldToScreen(p.x, p.y, view, base, w, h);
+            if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+          });
+          ctx.closePath();
+        }
+        ctx.fill("evenodd");
+        ctx.stroke();
+      }
+    }
+
     // Graticule (every 10 degrees of lon/lat, faint)
     ctx.strokeStyle = "rgba(30,60,90,0.35)";
     ctx.lineWidth = 1;
@@ -251,35 +394,61 @@ export default function SimulateMap() {
     const step = 10;
     const topLeft = screenToWorld(0, 0, view, base, w, h);
     const botRight = screenToWorld(w, h, view, base, w, h);
-    const lonStart = Math.floor((topLeft.x / COS_REF_LAT + REF_LON) / step) * step;
-    const lonEnd = Math.ceil((botRight.x / COS_REF_LAT + REF_LON) / step) * step;
+    const lonStart = Math.floor((topLeft.x / COS_REF_LAT + DEFAULT_REF_LON) / step) * step;
+    const lonEnd = Math.ceil((botRight.x / COS_REF_LAT + DEFAULT_REF_LON) / step) * step;
     for (let lon = lonStart; lon <= lonEnd; lon += step) {
-      const wx = (lon - REF_LON) * COS_REF_LAT;
+      const wx = (lon - DEFAULT_REF_LON) * COS_REF_LAT;
       const { sx } = worldToScreen(wx, 0, view, base, w, h);
       ctx.moveTo(sx, 0);
       ctx.lineTo(sx, h);
     }
-    const latStart = Math.floor((REF_LAT - botRight.y) / step) * step;
-    const latEnd = Math.ceil((REF_LAT - topLeft.y) / step) * step;
+    const latStart = Math.floor((DEFAULT_REF_LAT - botRight.y) / step) * step;
+    const latEnd = Math.ceil((DEFAULT_REF_LAT - topLeft.y) / step) * step;
     for (let lat = latStart; lat <= latEnd; lat += step) {
-      const wy = REF_LAT - lat;
+      const wy = DEFAULT_REF_LAT - lat;
       const { sy } = worldToScreen(0, wy, view, base, w, h);
       ctx.moveTo(0, sy);
       ctx.lineTo(w, sy);
     }
     ctx.stroke();
 
-    // Flight-plan route (origin -> destination), if a flight is live
+    // FIR/UIR airspace boundary polygons
+    if (firPolygons) {
+      ctx.strokeStyle = "rgba(90,140,190,0.35)";
+      ctx.lineWidth = 1;
+      for (const poly of firPolygons) {
+        if (poly._pts.length < 2) continue;
+        ctx.beginPath();
+        poly._pts.forEach((p, i) => {
+          const { sx, sy } = worldToScreen(p.x, p.y, view, base, w, h);
+          if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+        });
+        ctx.closePath();
+        ctx.stroke();
+      }
+    }
+
+    // Flight-plan route (origin -> destination), if a flight is live.
+    // Uses the real published-airway polyline (routeLine) when one was
+    // found for this origin/destination; otherwise a straight line, same
+    // as before this dataset existed.
     if (originAirport && destAirport) {
-      const p0 = worldToScreen(originAirport._x, originAirport._y, view, base, w, h);
-      const p1 = worldToScreen(destAirport._x, destAirport._y, view, base, w, h);
       ctx.save();
       ctx.setLineDash([6, 6]);
       ctx.strokeStyle = "rgba(255,180,60,0.5)";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(p0.sx, p0.sy);
-      ctx.lineTo(p1.sx, p1.sy);
+      if (routeLine && routeLine.length >= 2) {
+        routeLine.forEach((p, i) => {
+          const { sx, sy } = worldToScreen(p.x, p.y, view, base, w, h);
+          if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+        });
+      } else {
+        const p0 = worldToScreen(originAirport._x, originAirport._y, view, base, w, h);
+        const p1 = worldToScreen(destAirport._x, destAirport._y, view, base, w, h);
+        ctx.moveTo(p0.sx, p0.sy);
+        ctx.lineTo(p1.sx, p1.sy);
+      }
       ctx.stroke();
       ctx.restore();
     }
@@ -487,7 +656,7 @@ export default function SimulateMap() {
     ctx.fillStyle = "rgba(42,64,96,0.9)";
     ctx.font = "9px 'Share Tech Mono', monospace";
     ctx.fillText(`RENDERED ${visibleCount} / ${airports.length}`, 10, h - 10);
-  }, [airports, hovered, selected, flight, meta, originAirport, destAirport, notams, diversion]);
+  }, [airports, hovered, selected, flight, meta, originAirport, destAirport, notams, diversion, firPolygons, routeLine, worldLand]);
 
   // ── Init base transform once airports load ─────────────────────────────
   useEffect(() => {

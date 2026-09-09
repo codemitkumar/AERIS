@@ -77,6 +77,7 @@ class NotamInjector:
         self.closures: list[dict] = []              # [{icao, on_path, notam}, ...]
         self.closed_airport_icaos: set[str] = set()
         self.closed_runways: dict[str, set[str]] = {}
+        self._fir_polygons: dict | None = None
 
     # ── control ──────────────────────────────────────────────────────────
 
@@ -88,6 +89,7 @@ class NotamInjector:
         self.closures = []
         self.closed_airport_icaos = set()
         self.closed_runways = {}
+        self._fir_polygons = self._load_fir_polygons(gen)
 
         airports = gen.airports
         if not airports:
@@ -132,6 +134,19 @@ class NotamInjector:
                 f"{c['icao']}{'*' if c['on_path'] else ''}" for c in self.closures
             )
             print(f"[INJECT] notam  {len(self.closures)} closure(s)  {tags}  (* = on flight path)")
+
+    @staticmethod
+    def _load_fir_polygons(gen) -> dict | None:
+        """Real FIR polygons when the flight is EU-region and the
+        EUROCONTROL R&D data is present; None otherwise (falls back to the
+        existing airport-ICAO-as-FIR placeholder)."""
+        if getattr(gen, "region", "US") != "EU":
+            return None
+        try:
+            from data.ingestion.eurocontrol_loader import load_fir_polygons
+            return load_fir_polygons()
+        except FileNotFoundError:
+            return None
 
     def stop(self) -> None:
         self.active = False
@@ -255,12 +270,19 @@ class NotamInjector:
 
         number = f"{random.choice(_SERIES_LETTERS)}{random.randint(1, 9999):04d}/{now.strftime('%y')}"
 
+        fir = apt["icao"]
+        if self._fir_polygons:
+            from data.ingestion.eurocontrol_loader import fir_for_point
+            real_fir = fir_for_point(apt["lat"], apt["lon"], self._fir_polygons)
+            if real_fir:
+                fir = real_fir
+
         notam = Notam(
             raw="",
             number=number,
             year=now.strftime("%y"),
             notam_type="NEW",
-            fir=apt["icao"],
+            fir=fir,
             q_code=f"Q{subject}{condition}",
             subject=subject,
             condition=condition,

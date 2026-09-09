@@ -404,6 +404,25 @@ The `faa_airport_loader` module derives an operational classification for each a
 
 Transport-category aircraft are constrained to `large_airport` and `medium_airport` pools for route selection, consistent with airline operational specifications.
 
+### 7.4 Supplementary Traffic & Airspace Data (EUROCONTROL)
+
+`AERIS_ENGINE/data/adrrData/` holds sample-month R&D flight, trajectory, and airspace-structure data released by **EUROCONTROL** (flight plans, actual/filed 4D trajectory points, FIR/AUA airspace transits, ATS route network, and FIR/UIR boundary polygons; source: EUROCONTROL Network Manager PRISME data warehouse), covering ~30 sample months from 2015–2024.
+
+It is wired into AERIS as an **opt-in European region**, additive to — and never replacing — the FAA/US pipeline everything defaults to:
+
+| Module | What it does |
+|---|---|
+| `data/ingestion/eurocontrol_loader.py` | Core parsers: real flight plans, FIR/UIR boundary polygons, ATS route network; point-in-polygon FIR lookup; nearest-published-route lookup. |
+| `data/ingestion/eurocontrol_airport_loader.py` | Derives a European airport list from real flight-plan ADEP/ADES traffic — same dict shape as `faa_airport_loader.py` so it drops into the rest of the engine. |
+| `data/ingestion/FlightGenerator.py` | `FlightGenerator(perf, region="EU")` (default remains `"US"`, unchanged) picks European origin/destination pairs from real traffic. |
+| `emergencyInjector/notam/airport_closure.py` | Uses the real FIR a closure falls in (region="EU") instead of the airport-ICAO placeholder used for `"US"`. |
+| `benchmarks/experiments/real_scenario_sampler.py` | Samples real flight-plan-derived scenarios for exploration — kept separate from the paper's pinned reproducibility scripts. |
+| `AERIS_UI` (`SimulateMap.jsx`) | A US/EU toggle switches the airport set, re-centers the map projection on the loaded region, and (EU only) renders real FIR/UIR boundaries and a real published-airway route line in place of the straight-line default. |
+
+**GRACE eligibility caveat:** EUROCONTROL's R&D release has no runway-length data. GRACE's runway-floor constraint is never relaxed, so European airports (`runway_verified: False`, `runways: []`) will always fail that check and are not usable as GRACE diversion candidates — this dataset adds scenario realism, trajectory context, and map/route visualization, not GRACE candidate coverage. Pairing it with a real international runway source is future work, not attempted here to avoid fabricating runway data.
+
+> This dataset is released by EUROCONTROL for **research & development use only**, under terms that prohibit redistribution and require attribution. It is **not distributed with this repository** — the folder is excluded via `.gitignore` — and must be obtained directly from EUROCONTROL by anyone wishing to use it. AERIS is not affiliated with, endorsed by, or associated with EUROCONTROL.
+
 ---
 
 ## 8. Dependencies
@@ -452,6 +471,7 @@ AERIS/
 │   │   ├── APT_BASE.csv           , FAA NASR (not distributed, obtain from FAA)
 │   │   ├── APT_RWY.csv            , FAA NASR (not distributed, obtain from FAA)
 │   │   └── APT_RWY_END.csv        , FAA NASR (not distributed, obtain from FAA)
+│   ├── data/adrrData/             , EUROCONTROL R&D data (not distributed, gitignored, Section 7.4)
 │   ├── simulationdata/            , generated dataset output
 │   ├── main.py                    , interactive single-flight runner
 │   └── batch_sim.py               , parallel batch dataset generator
@@ -465,6 +485,8 @@ AERIS/
 **Airport Data:** Airport and runway information is sourced from the FAA National Airspace System Resources (NASR) subscription product, maintained by FAA Aeronautical Information Services. Used exclusively for non-commercial research. Users must obtain NASR data files directly from the FAA and are solely responsible for compliance with the FAA's terms of use.
 
 **Aircraft Performance Data:** Performance parameters are derived from publicly available sources including FAA Type Certificate Data Sheets, Approved Flight Manuals, Flight Crew Operating Manuals, and open-source JSBSim aircraft XML definitions. Values are representative approximations for simulation and research purposes and must not be used for actual flight planning or airworthiness determination.
+
+**Traffic & Airspace Data:** Sample-month flight, trajectory, and airspace-structure R&D data (Section 7.4) is released by **EUROCONTROL** (© European Organisation for the Safety of Air Navigation), sourced from the Network Manager PRISME data warehouse. Used exclusively for non-commercial research; not redistributed with this repository. Users must obtain this data directly from EUROCONTROL and are solely responsible for compliance with EUROCONTROL's R&D data terms of use. AERIS is not affiliated with, endorsed by, or associated with EUROCONTROL.
 
 **Regulatory References:** Alert thresholds reference ICAO Annex 6 (Operation of Aircraft), FAA FAR Part 25 (Transport Category Airplanes), FAR Part 23 (Normal Category Airplanes), and published GPWS/EGPWS operating criteria. These references are cited for transparency and do not constitute regulatory compliance claims.
 
