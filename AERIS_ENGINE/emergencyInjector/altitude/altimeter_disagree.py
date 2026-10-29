@@ -7,23 +7,23 @@ class AltimeterDisagreeInjector:
 
     Drift model
     -----------
-    Each tick the biased channel grows by `rate` ft.  At 30 Hz and rate=2 the
-    displayed altitude drifts ~60 ft/s, reaching a 200 ft disagree in ~3 seconds.
+    The biased channel grows by `rate` ft every second, so a 200 ft disagree
+    takes 200/rate seconds regardless of the feed's sample rate.
 
     Terminal commands
     -----------------
-        inject alt_disagree captain 2
-        inject alt_disagree fo -3
+        inject alt_disagree captain 60
+        inject alt_disagree fo -90
         clear alt_disagree
     """
 
     NAME = "Altimeter Disagree"
 
-    def __init__(self, side: str = "captain", rate: float = 2.0):
+    def __init__(self, side: str = "captain", rate: float = 60.0):
         if side not in ("captain", "fo", "both"):
             raise ValueError(f"side must be 'captain', 'fo', or 'both', got '{side}'")
         self.side   = side
-        self.rate   = rate   # ft per tick, positive = over-reading
+        self.rate   = rate   # ft per second, positive = over-reading
         self._drift = 0.0
         self.active = False
 
@@ -38,7 +38,7 @@ class AltimeterDisagreeInjector:
         self.active = True
         print(
             f"[INJECT] altimeter_disagree  side={self.side}  "
-            f"rate={self.rate:+.1f} ft/tick  (~{self.rate * 30:+.0f} ft/s)"
+            f"rate={self.rate:+.1f} ft/s"
         )
 
     def stop(self) -> None:
@@ -53,7 +53,7 @@ class AltimeterDisagreeInjector:
     def __call__(self, state: dict, gen) -> None:
         if not self.active:
             return
-        self._drift += self.rate
+        self._drift += self.rate * getattr(gen, "dt", 1.0 / 30.0)
         if self.side in ("captain", "both"):
             state["alt_captain"] = state.get("alt_captain", 0.0) + self._drift
         if self.side in ("fo", "both"):

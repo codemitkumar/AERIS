@@ -1,5 +1,6 @@
-import collections
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
+from core.rate import TimeWindow, window_len
 
 
 class SustainedGModule:
@@ -21,7 +22,7 @@ class SustainedGModule:
     _WARN_G_NEG       = -0.5
     _CRIT_G_NEG       = -1.0
     _SUSTAIN_G        = 1.5
-    _SUSTAIN_TICKS    = 10
+    _SUSTAIN_S        = 0.33   # seconds the elevated-G condition must persist
 
     _ALERT_MAP = {
         "G_LOAD_WARNING": {
@@ -48,8 +49,9 @@ class SustainedGModule:
 
     def __init__(self, ws=None, perf=None):
         self._ws           = ws
-        self._sustain_buf  = collections.deque(maxlen=self._SUSTAIN_TICKS)
-        self._last_alert: str | None = None
+        self._sustain_buf  = TimeWindow(self._SUSTAIN_S)
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -62,7 +64,7 @@ class SustainedGModule:
             return
 
         g = state.get("g_load", 1.0)
-        self._sustain_buf.append(g)
+        self._sustain_buf.push(state, g)
 
         if g > self._CRIT_G_POS:
             alert = "G_LOAD_CRITICAL"
@@ -72,15 +74,15 @@ class SustainedGModule:
             alert = "G_LOAD_WARNING"
         elif g < self._WARN_G_NEG:
             alert = "G_NEGATIVE_WARNING"
-        elif (len(self._sustain_buf) == self._SUSTAIN_TICKS
+        elif (self._sustain_buf.full
               and all(v > self._SUSTAIN_G for v in self._sustain_buf)):
             alert = "G_SUSTAINED_WARNING"
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(f"[ALERT] {alert}  g={g:.2f}G  phase={phase}")
@@ -92,7 +94,7 @@ class SustainedGModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "G_LOAD"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
-            self._last_alert = None
+        if self._latch.current is not None:
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "G_LOAD"})

@@ -1,0 +1,31 @@
+{
+  "non_yielding_sink": {
+    "runs": 5,
+    "alert_events": [
+      16,
+      16,
+      16,
+      16,
+      16
+    ],
+    "alert_sequence_identical": true,
+    "observed_state_identical": true,
+    "ticks_where_derived_keys_missing": 3000,
+    "ticks_observed": 3000
+  },
+  "yielding_sink": {
+    "runs": 5,
+    "alert_events": [
+      16,
+      16,
+      16,
+      16,
+      16
+    ],
+    "alert_sequence_identical": true,
+    "observed_state_identical": true,
+    "ticks_where_derived_keys_missing": 3000,
+    "ticks_observed": 3000
+  },
+  "alert_count_matches_between_sinks": true
+}

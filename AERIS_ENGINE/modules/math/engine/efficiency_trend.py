@@ -1,5 +1,6 @@
-import collections
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
+from core.rate import TimeWindow, window_len
 
 
 class EfficiencyTrendModule:
@@ -18,7 +19,7 @@ class EfficiencyTrendModule:
     """
 
     _SUPPRESS_PHASES = frozenset({"GROUND_ROLL", "ROTATION", "COMPLETE"})
-    _WINDOW          = 60
+    _WINDOW_S        = 2.0   # seconds of fuel-efficiency history
     _WARN_EFF        = 0.95
     _CRIT_EFF        = 0.88
 
@@ -37,9 +38,10 @@ class EfficiencyTrendModule:
 
     def __init__(self, ws=None, perf=None):
         self._ws    = ws
-        self._buf1  = collections.deque(maxlen=self._WINDOW)
-        self._buf2  = collections.deque(maxlen=self._WINDOW)
-        self._last_alert: str | None = None
+        self._buf1  = TimeWindow(self._WINDOW_S)
+        self._buf2  = TimeWindow(self._WINDOW_S)
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -53,10 +55,10 @@ class EfficiencyTrendModule:
 
         eff1 = state.get("engine_eff_eng1", 1.0)
         eff2 = state.get("engine_eff_eng2", 1.0)
-        self._buf1.append(eff1)
-        self._buf2.append(eff2)
+        self._buf1.push(state, eff1)
+        self._buf2.push(state, eff2)
 
-        if len(self._buf1) < self._WINDOW:
+        if not self._buf1.full:
             return
 
         avg1 = sum(self._buf1) / len(self._buf1)
@@ -70,9 +72,9 @@ class EfficiencyTrendModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(f"[ALERT] {alert}  avg_eff1={avg1:.3f}  avg_eff2={avg2:.3f}  worst={worst:.3f}  phase={phase}")
@@ -84,7 +86,7 @@ class EfficiencyTrendModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "ENG_EFF"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
-            self._last_alert = None
+        if self._latch.current is not None:
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "ENG_EFF"})

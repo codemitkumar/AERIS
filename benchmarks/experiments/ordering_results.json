@@ -1,0 +1,34 @@
+{
+  "registration_positions": {
+    "GlideslopeDeviationModule": 16,
+    "CrosswindLimitModule": 39,
+    "TailwindModule": 40,
+    "UnstableApproachModule": 37,
+    "GoAroundAdvisoryModule": 41,
+    "AircraftHealthModule": 54
+  },
+  "coupled_fields": [
+    "crosswind_kts",
+    "tailwind_kts",
+    "glideslope_dots"
+  ],
+  "as_registered": {
+    "events": 26,
+    "missing": {
+      "crosswind_kts": 15508,
+      "tailwind_kts": 15508,
+      "glideslope_dots": 15512
+    }
+  },
+  "reversed": {
+    "events": 26,
+    "missing": {
+      "crosswind_kts": 15508,
+      "tailwind_kts": 15508,
+      "glideslope_dots": 15512
+    }
+  },
+  "sequence_identical": false,
+  "per_alert_delta": {},
+  "ticks": 30000
+}

@@ -70,20 +70,20 @@ The engine operates as a 30 Hz discrete-time state machine. At each tick, a flat
 
 **State enrichment:** Several modules compute and write derived quantities back into the shared state dictionary (e.g., `glideslope_dots`, `density_alt_ft`, `crosswind_kts`, `fuel_time_remaining_min`, `ice_accumulation`) making them available to downstream modules and Layer 2 without redundant computation.
 
-### 3.3 Flight Simulation
+### 3.3 Flight Data Sources
 
-The simulation core (`FlightGenerator`) models a complete flight from gate to gate through eight discrete phases:
+AERIS no longer generates its own flights. State comes from one of two sources, both feeding the same DataBus:
 
+- **X-Plane 11/12, live** (`data/ingestion/xplane_loader.py`, the default). X-Plane streams its datarefs over UDP (an `RREF` subscription to port 49000), so no plugin is needed. The aircraft profile is picked from the loaded aircraft's ICAO type. Emergencies come from X-Plane's own failure menu, which the flight model propagates physically, so AERIS must detect them without being told.
+- **NTSB docket FDR replay** (`data/ingestion/ntsb_fdr_loader.py`, Section 7.5): real flights with investigated outcomes, used as regression cases.
+
+```bash
+python AERIS_ENGINE/main.py                          # X-Plane must be running with a flight loaded
+python AERIS_ENGINE/main.py --source xplane --flight LOWW   # destination ICAO
+python AERIS_ENGINE/main.py --source ntsb --flight DCA22LA178
 ```
-GROUND_ROLL → ROTATION → CLIMB → CRUISE → DESCENT → APPROACH → LANDING → COMPLETE
-```
 
-Dynamics include altitude profile, airspeed, attitude, engine N1/EGT, fuel consumption, atmospheric conditions, QNH, radio altitude, and crew instrument readings. To produce statistically varied training data, the simulator incorporates:
-
-- Sinusoidal cruise altitude wander (±50–150 ft around cruise FL)
-- Autothrottle speed hunting (±1–3 kts, 25–100 s period)
-- Climb VS noise (5–15 % of nominal)
-- 15 % probability of stale barometric subscale settings per flight
+Flight phase on the live feed is derived from on-ground state, vertical speed and gear (`GROUND_ROLL → CLIMB → CRUISE → DESCENT → LANDING`).
 
 ### 3.4 Aircraft Performance Database
 
@@ -163,6 +163,7 @@ Air density at departure elevation is obtained from the **ADRpy** validated ISA 
 | ATT-3 | Pitch Limit       | Nose-high / nose-low extremes; phase-adjusted for climb           |
 | ATT-4 | Sustained G       | Sustained load factor outside 1 G ± tolerance for > 10 ticks     |
 | ATT-5 | Sideslip          | Lateral uncoordinated flight from sideslip or excess yaw rate     |
+| ATT-6 | Tail Strike       | Pitch vs tail-contact attitude with the mains on the runway; a probable strike latches for the rest of the flight |
 
 #### 3.5.6 Pressurization (PRESS)
 
@@ -221,7 +222,7 @@ Air density at departure elevation is obtained from the **ADRpy** validated ISA 
 
 ### 3.6 Emergency Fault Injection
 
-The `InjectionManager` applies parametric fault scenarios to the simulation state to produce labelled anomalous records for supervised learning. Faults may be triggered manually via terminal command or applied automatically at a configurable probability (default: 10 % per simulation).
+The `InjectionManager` applies parametric fault scenarios to the simulation state to produce labelled anomalous records for supervised learning. Faults are triggered from the terminal or the control panel. On the live X-Plane feed, prefer X-Plane's failure menu: the fuel injectors' drain is overwritten each tick by the real tank quantities.
 
 | Fault Injector          | Simulated Failure                                           |
 |-------------------------|-------------------------------------------------------------|
@@ -232,14 +233,6 @@ The `InjectionManager` applies parametric fault scenarios to the simulation stat
 | Energy Bleed            | Simultaneous altitude and speed decay                       |
 | Structural G Event      | Sustained G-loading (turbulence / upset)                    |
 | Fuel Leak               | Parametric mass loss from individual tanks                  |
-
-### 3.7 Batch Dataset Generation
-
-```bash
-python AERIS_ENGINE/batch_sim.py [model] [count] [workers]
-```
-
-Generates `count` independent simulations in parallel using `ProcessPoolExecutor`. Each worker is a separate OS process; the GIL is bypassed and random seeds diverge per process. On an 8-core machine, typical speedup is 7–8× relative to sequential generation. Output is self-contained JSON per simulation, with a cumulative `manifest.json` tracking injection statistics.
 
 ---
 
@@ -406,7 +399,7 @@ Transport-category aircraft are constrained to `large_airport` and `medium_airpo
 
 ### 7.4 Supplementary Traffic & Airspace Data (EUROCONTROL)
 
-`AERIS_ENGINE/data/adrrData/` holds sample-month R&D flight, trajectory, and airspace-structure data released by **EUROCONTROL** (flight plans, actual/filed 4D trajectory points, FIR/AUA airspace transits, ATS route network, and FIR/UIR boundary polygons; source: EUROCONTROL Network Manager PRISME data warehouse), covering ~30 sample months from 2015–2024.
+Sample-month R&D flight, trajectory, and airspace-structure data released by **EUROCONTROL** (flight plans, actual/filed 4D trajectory points, FIR/AUA airspace transits, ATS route network, and FIR/UIR boundary polygons; source: EUROCONTROL Network Manager PRISME data warehouse), covering ~30 sample months from 2015–2024. Lives at `<AERIS_DATA_ROOT>/adrrData/` on the external research-data drive (Section 7.6), not inside the repository tree.
 
 It is wired into AERIS as an **opt-in European region**, additive to — and never replacing — the FAA/US pipeline everything defaults to:
 
@@ -414,14 +407,55 @@ It is wired into AERIS as an **opt-in European region**, additive to — and nev
 |---|---|
 | `data/ingestion/eurocontrol_loader.py` | Core parsers: real flight plans, FIR/UIR boundary polygons, ATS route network; point-in-polygon FIR lookup; nearest-published-route lookup. |
 | `data/ingestion/eurocontrol_airport_loader.py` | Derives a European airport list from real flight-plan ADEP/ADES traffic — same dict shape as `faa_airport_loader.py` so it drops into the rest of the engine. |
-| `data/ingestion/FlightGenerator.py` | `FlightGenerator(perf, region="EU")` (default remains `"US"`, unchanged) picks European origin/destination pairs from real traffic. |
 | `emergencyInjector/notam/airport_closure.py` | Uses the real FIR a closure falls in (region="EU") instead of the airport-ICAO placeholder used for `"US"`. |
 | `benchmarks/experiments/real_scenario_sampler.py` | Samples real flight-plan-derived scenarios for exploration — kept separate from the paper's pinned reproducibility scripts. |
 | `AERIS_UI` (`SimulateMap.jsx`) | A US/EU toggle switches the airport set, re-centers the map projection on the loaded region, and (EU only) renders real FIR/UIR boundaries and a real published-airway route line in place of the straight-line default. |
 
 **GRACE eligibility caveat:** EUROCONTROL's R&D release has no runway-length data. GRACE's runway-floor constraint is never relaxed, so European airports (`runway_verified: False`, `runways: []`) will always fail that check and are not usable as GRACE diversion candidates — this dataset adds scenario realism, trajectory context, and map/route visualization, not GRACE candidate coverage. Pairing it with a real international runway source is future work, not attempted here to avoid fabricating runway data.
 
-> This dataset is released by EUROCONTROL for **research & development use only**, under terms that prohibit redistribution and require attribution. It is **not distributed with this repository** — the folder is excluded via `.gitignore` — and must be obtained directly from EUROCONTROL by anyone wishing to use it. AERIS is not affiliated with, endorsed by, or associated with EUROCONTROL.
+> This dataset is released by EUROCONTROL for **research & development use only**, under terms that prohibit redistribution and require attribution. It is **not distributed with this repository** — and must be obtained directly from EUROCONTROL by anyone wishing to use it. AERIS is not affiliated with, endorsed by, or associated with EUROCONTROL.
+
+### 7.5 Real Flight-Data References (NASA DASHlink, OpenSky Network)
+
+Two additional real-world reference datasets are staged on the external research-data drive (Section 7.6), for calibrating Layer 1's thresholds against genuine sensor recordings and for grounding Layer 4's emergency-severity work in real incident outcomes rather than synthetic data alone:
+
+| Dataset | Curator | Contents | Location |
+|---|---|---|---|
+| DASHlink Flight Data | NASA Ames | Real flight data recorder (FDR) recordings, 186 parameters per flight, from commercial operations. Predominantly normal operations — genuine exceedance events are a small fraction of the archive. | `<AERIS_DATA_ROOT>/dashlink/` |
+| Reference Datasets for In-Flight Emergency Situations | Xavier Olive (ONERA), via OpenSky Network | Real ADS-B trajectories for flights that squawked 7700 (in-flight emergency), 1 Jan 2018 – 29 Jan 2020, with metadata on the nature/outcome of each event sourced from Twitter and The Aviation Herald. | `<AERIS_DATA_ROOT>/opensky_emergency/` |
+
+Neither dataset is redistributed with this repository — both are obtained directly from their respective sources and staged externally.
+
+#### NTSB docket FDR cases
+
+NTSB public dockets (`data.ntsb.gov/Docket`) for larger investigations often include the flight data recorder CSV as "FLIGHT DATA RECORDER - ATTACHMENT 1". Each one is a real flight with a known, investigated outcome, which makes it a labelled regression case. DASHlink is the opposite: mostly normal flights, useful for measuring false alarms. DASHlink is no longer a runtime source; `dashlink_loader.py` is kept only so the paper's benchmarks in `benchmarks/experiments/` stay reproducible.
+
+```
+python scripts/fetch_ntsb_docket.py 105714                 # download FDR items to AERIS_ENGINE/data/ntsb/<NTSB id>/
+python AERIS_ENGINE/main.py --source ntsb --flight DCA22LA178
+python -m unittest tests.test_ntsb_cases -v                # this and the next: run from AERIS_ENGINE
+python -m tests.ntsb_harness DCA22LA178 --grace            # alert and GRACE timeline
+```
+
+`data/ingestion/ntsb_fdr_loader.py` reads the NTSB CSV export and replays it on the DataBus. The export has a metadata header, a units row, a row describing how each discrete is encoded, and sparse rows on the recorder's word-slot grid. The loader holds each channel's last sample, derives Mach, TAS and vertical speed, zeroes ADC no-data sentinels on the ground, and translates the autopilot mode discretes. Each case has a committed fixture, `AERIS_ENGINE/tests/ntsb_cases/<id>.json`, that holds three things:
+
+- **docket:** route, QNH and aircraft profile, taken from the factual reports
+- **expect:** the alerts that must fire, the windows that must stay quiet, and GRACE's required pick
+- **known_false_alarms:** module limitations that real data exposes, each with its cause
+
+The downloads themselves are git-ignored.
+
+> **Source — NTSB**: National Transportation Safety Board, public docket DCA22LA178 (Delta 1696, B757-251 N540US, Atlanta, 6 Aug 2022), Flight Data Recorder Specialist's Factual Report and Attachment 1. NTSB docket material is public; AERIS is not affiliated with the NTSB.
+
+> **Credit — NASA DASHlink**: NASA Ames Research Center, Data Sciences Group, "Flight Data For Tail 652–667" and related datasets, DASHlink (`c3.ndc.nasa.gov/dashlink`).
+>
+> **Credit — OpenSky in-flight emergency dataset**: Xavier Olive, Axel Tanner, Martin Strohmeier, Matthias Schäfer, Metin Feridun, Allan Tart, Ivan Martinovic and Vincent Lenders. "OpenSky Report 2020: Analysing in-flight emergencies using big data." In *2020 IEEE/AIAA 39th Digital Avionics Systems Conference (DASC)*, October 2020. Dataset: Olive et al., *Reference datasets for in-flight emergency situations*, Zenodo, DOI: [10.5281/zenodo.3937483](https://doi.org/10.5281/zenodo.3937483). Released under a non-commercial license — see the dataset's `LICENSE.txt`; not cleared for use beyond research/POC purposes as currently licensed.
+>
+> Also underlying the OpenSky data: Matthias Schäfer, Martin Strohmeier, Vincent Lenders, Ivan Martinovic and Matthias Wilhelm. "Bringing Up OpenSky: A Large-scale ADS-B Sensor Network for Research." In *Proceedings of the 13th IEEE/ACM International Symposium on Information Processing in Sensor Networks (IPSN)*, pages 83-94, April 2014.
+
+### 7.6 External Research-Data Root
+
+`AERIS_ENGINE/config/settings.py` defines `DATA_ROOT` (default `D:\Sanju\ResearchData`, overridable via the `AERIS_DATA_ROOT` environment variable) as the single location for every external reference dataset in Sections 7.4–7.5. Code that needs this data (`data/ingestion/eurocontrol_loader.py` and its dependents) calls `require_data_root()`, which raises `ResearchDataUnavailableError` — a `FileNotFoundError` subclass, so existing fallback handling keeps working unchanged — with a clear message if the drive isn't connected, rather than failing on a missing-file error several calls downstream. `main.py` also checks the drive at startup and prints a one-line `[AERIS]` status banner either way, so a disconnected drive is visible immediately rather than only when EU/real-data code paths are actually exercised.
 
 ---
 
@@ -440,12 +474,15 @@ It is wired into AERIS as an **opt-in European region**, additive to — and nev
 
 ```
 AERIS/
-├── AERIS_ENGINE/                  , Layer 1: monitoring and simulation engine
+├── AERIS_ENGINE/                  , Layer 1: monitoring engine
 │   ├── core/
 │   │   └── data_bus.py            , async pub/sub event bus
 │   ├── data/
 │   │   └── ingestion/
-│   │       ├── FlightGenerator.py , 30 Hz flight state machine
+│   │       ├── xplane_loader.py   , live X-Plane UDP feed (default source)
+│   │       ├── ntsb_fdr_loader.py , NTSB docket FDR replay
+│   │       ├── dashlink_loader.py , DASHlink replay, benchmarks only
+│   │       ├── flight_common.py   , Phase enum, great-circle helpers
 │   │       ├── aircraft_performance.py
 │   │       ├── faa_airport_loader.py
 │   │       └── notam_reader.py    , ICAO NOTAM text parser/decoder
@@ -471,11 +508,16 @@ AERIS/
 │   │   ├── APT_BASE.csv           , FAA NASR (not distributed, obtain from FAA)
 │   │   ├── APT_RWY.csv            , FAA NASR (not distributed, obtain from FAA)
 │   │   └── APT_RWY_END.csv        , FAA NASR (not distributed, obtain from FAA)
-│   ├── data/adrrData/             , EUROCONTROL R&D data (not distributed, gitignored, Section 7.4)
-│   ├── simulationdata/            , generated dataset output
-│   ├── main.py                    , interactive single-flight runner
-│   └── batch_sim.py               , parallel batch dataset generator
+│   ├── config/
+│   │   └── settings.py            , external research-data root (Section 7.6)
+│   ├── simulationdata/            , logged flights
+│   └── main.py                    , engine entry point (X-Plane or NTSB)
 └── README.md
+
+<AERIS_DATA_ROOT>/                 , external drive, default D:\Sanju\ResearchData (Section 7.6)
+├── adrrData/                      , EUROCONTROL R&D data (Section 7.4)
+├── dashlink/                      , NASA DASHlink FDR archive (Section 7.5)
+└── opensky_emergency/             , OpenSky in-flight-emergency dataset (Section 7.5)
 ```
 
 ---
@@ -487,6 +529,8 @@ AERIS/
 **Aircraft Performance Data:** Performance parameters are derived from publicly available sources including FAA Type Certificate Data Sheets, Approved Flight Manuals, Flight Crew Operating Manuals, and open-source JSBSim aircraft XML definitions. Values are representative approximations for simulation and research purposes and must not be used for actual flight planning or airworthiness determination.
 
 **Traffic & Airspace Data:** Sample-month flight, trajectory, and airspace-structure R&D data (Section 7.4) is released by **EUROCONTROL** (© European Organisation for the Safety of Air Navigation), sourced from the Network Manager PRISME data warehouse. Used exclusively for non-commercial research; not redistributed with this repository. Users must obtain this data directly from EUROCONTROL and are solely responsible for compliance with EUROCONTROL's R&D data terms of use. AERIS is not affiliated with, endorsed by, or associated with EUROCONTROL.
+
+**Real Flight-Data References (Section 7.5):** Flight data recorder recordings are sourced from **NASA Ames Research Center's DASHlink** platform (`c3.ndc.nasa.gov/dashlink`), used for non-commercial research calibration of Layer 1 thresholds. AERIS is not affiliated with, endorsed by, or associated with NASA. Real-world in-flight emergency trajectory and metadata are sourced from the **OpenSky Network**'s *Reference datasets for in-flight emergency situations* (curated by Xavier Olive, ONERA; DOI: [10.5281/zenodo.3937483](https://doi.org/10.5281/zenodo.3937483)), released under a non-commercial license — see Section 7.5 for the full citation. Neither dataset is redistributed with this repository; both must be obtained directly from their respective sources. AERIS is not affiliated with, endorsed by, or associated with the OpenSky Network or ONERA.
 
 **Regulatory References:** Alert thresholds reference ICAO Annex 6 (Operation of Aircraft), FAA FAR Part 25 (Transport Category Airplanes), FAR Part 23 (Normal Category Airplanes), and published GPWS/EGPWS operating criteria. These references are cited for transparency and do not constitute regulatory compliance claims.
 

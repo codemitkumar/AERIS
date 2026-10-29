@@ -1,3 +1,4 @@
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
 
 
@@ -35,7 +36,8 @@ class CruiseAltitudeModule:
     def __init__(self, ws=None, perf=None):
         self._ws         = ws
         self._cruise_alt = perf.cruise_alt_ft if perf else 35_000.0
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -45,7 +47,7 @@ class CruiseAltitudeModule:
         if phase == "COMPLETE":
             await self._clear(); return
         if phase != "CRUISE":
-            if self._last_alert:
+            if self._latch.current:
                 await self._clear()
             return
 
@@ -59,9 +61,9 @@ class CruiseAltitudeModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(f"[ALERT] {alert}  alt={alt:.0f}  cruise_alt={self._cruise_alt:.0f}  dev={dev:.0f} ft")
@@ -73,7 +75,7 @@ class CruiseAltitudeModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "CRUISE_ALT_DEV"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
-            self._last_alert = None
+        if self._latch.current is not None:
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "CRUISE_ALT_DEV"})

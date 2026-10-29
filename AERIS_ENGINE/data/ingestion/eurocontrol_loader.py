@@ -1,9 +1,11 @@
 """EUROCONTROL R&D data loader.
 
-Reads the sample-month CSVs under AERIS_ENGINE/data/adrrData/<yyyymm>/
+Reads the sample-month CSVs under <AERIS_DATA_ROOT>/adrrData/<yyyymm>/
 (flight plans, FIR/UIR airspace polygons, ATS route network) per the schema
 in "FNI025 R&D Data Description v10.pdf". R&D-use-only license — see
-README.md Section 7.4/10. Not distributed with this repository.
+README.md Section 7.4/10. Not distributed with this repository; lives on
+the external research-data drive (config/settings.py), not under
+AERIS_ENGINE/.
 """
 
 import csv
@@ -11,7 +13,8 @@ import glob
 import math
 from pathlib import Path
 
-_ADRR_DIR = Path(__file__).resolve().parent.parent / "adrrData"
+from config.settings import ADRR_DIR as _ADRR_DIR
+from config.settings import require_data_root
 
 DEFAULT_MONTH = "202406"
 
@@ -28,6 +31,7 @@ def _float(val: str):
 
 
 def _month_dir(month: str) -> Path:
+    require_data_root()  # distinct error if the drive itself isn't connected
     d = _ADRR_DIR / month
     if not d.is_dir():
         raise FileNotFoundError(

@@ -1,3 +1,4 @@
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
 
 
@@ -32,7 +33,8 @@ class ExcessiveSinkRateModule:
 
     def __init__(self, ws=None, perf=None):
         self._ws = ws
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -48,7 +50,7 @@ class ExcessiveSinkRateModule:
         vs  = (state.get("vs_captain", 0.0) + state.get("vs_fo", 0.0)) / 2.0
 
         if ra > 2_500.0:
-            if self._last_alert:
+            if self._latch.current:
                 await self._clear()
             return
 
@@ -64,9 +66,9 @@ class ExcessiveSinkRateModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(f"[ALERT] {alert}  VS={vs:.0f} ft/min  RA={ra:.0f} ft  phase={phase}")
@@ -78,7 +80,7 @@ class ExcessiveSinkRateModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "SINK_RATE"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
-            self._last_alert = None
+        if self._latch.current is not None:
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "SINK_RATE"})

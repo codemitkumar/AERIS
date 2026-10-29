@@ -14,7 +14,7 @@ import math
 import random
 from datetime import datetime, timedelta, timezone
 
-from data.ingestion.FlightGenerator import bearing, haversine_nm
+from data.ingestion.flight_common import bearing, haversine_nm
 from data.ingestion.notam_reader import Notam
 
 _EARTH_R_NM = 3440.065

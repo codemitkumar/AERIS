@@ -1,4 +1,6 @@
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
+from core.rate import tick_dt
 
 
 class FuelImbalanceModule:
@@ -48,9 +50,9 @@ class FuelImbalanceModule:
 
     def __init__(self, ws=None):
         self._ws         = ws
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
         self._flight_time = 0.0
-        self._dt          = 1 / 30
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -66,7 +68,7 @@ class FuelImbalanceModule:
             self._flight_time = 0.0
             return
 
-        self._flight_time += self._dt
+        self._flight_time += tick_dt(state)
 
         if self._flight_time < self._STABLE_TIME:
             return
@@ -88,9 +90,9 @@ class FuelImbalanceModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         heavy = "LEFT" if left > right else "RIGHT"
 
@@ -109,7 +111,7 @@ class FuelImbalanceModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "FUEL_IMBALANCE"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
-            self._last_alert = None
+        if self._latch.current is not None:
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "FUEL_IMBALANCE"})

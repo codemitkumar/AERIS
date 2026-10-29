@@ -1,5 +1,6 @@
-from collections import deque
 from core.data_bus import DataBus
+from core.alerting import UNCHANGED, AlertLatch
+from core.rate import TimeWindow, sample_rate
 
 
 class OverspeedModule:
@@ -18,19 +19,19 @@ class OverspeedModule:
     OVERSPEED (critical)
         Fires when IAS ≥ VMO or Mach ≥ MMO.
 
-    Acceleration is computed by comparing the mean IAS over two consecutive
-    2-second windows (120 ticks at 30 Hz), which reduces the ±1 kt ADC noise
-    to ~0.07 kt average error before the rate calculation.
-
-    Speed limits are read from AircraftPerf at construction — each aircraft type
-    carries its own certified values (A320: 350 / M0.82, C172P: VNE 163 kts, …).
+    Acceleration comes from the mean IAS over two consecutive 1-second
+    windows. Speed limits use the aircraft's own recorded max-allowable
+    airspeed when the feed carries one, else the profile value.
     """
 
-    # Smoothing window per half-buffer: 2 s × 30 Hz = 60 ticks
-    # Two halves are compared → effective dt = 2 s for rate calculation
-    _HALF_WIN = 60
+    # Two of these are compared to get the rate. Can't go much shorter: real
+    # airspeed is 4 Hz quantised to 0.25 kt, and with only a couple of samples
+    # one quantisation step reads as ~1 kt/s of acceleration.
+    _HALF_WIN_S = 1.0
 
-    MARGIN_KTS   = 15.0    # kts below VMO  → approaching warning
+    # Airliners cruise within 3-17 kt of max-allowable, so the old 15 kt
+    # margin warned almost continuously in service.
+    MARGIN_KTS   = 5.0     # kts below VMO  → approaching warning
     MARGIN_MACH  = 0.02    # Mach below MMO → approaching warning
     APPROACH_SEC = 120.0   # seconds-to-exceed threshold
 
@@ -62,11 +63,13 @@ class OverspeedModule:
             self._mmo = 0.82
             self._vno = 0.0
 
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            warn_dwell_s=5.0, clear_dwell_s=5.0,
+            severity_of=lambda a: self._ALERT_MAP[a]["severity"])
 
-        # Two back-to-back 2-second windows for smooth rate computation
-        self._ias_buf:  deque[float] = deque(maxlen=self._HALF_WIN * 2)
-        self._mach_buf: deque[float] = deque(maxlen=self._HALF_WIN * 2)
+        # Two back-to-back half-windows for smooth rate computation
+        self._ias_buf  = TimeWindow(self._HALF_WIN_S * 2)
+        self._mach_buf = TimeWindow(self._HALF_WIN_S * 2)
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -83,32 +86,37 @@ class OverspeedModule:
             await self._clear()
             return
 
+        # The recorded limit accounts for configuration and altitude; the
+        # profile value is a fallback for feeds that don't carry one.
+        vmo = state.get("max_allowable_ias_kts") or self._vmo
+
         avg_ias = (ias_cap + ias_fo) / 2.0
-        self._ias_buf.append(avg_ias)
-        self._mach_buf.append(mach)
+        self._ias_buf.push(state, avg_ias)
+        self._mach_buf.push(state, mach)
 
         # ── Acceleration from smoothed two-window comparison ──────────────────
         ias_accel  = 0.0   # kts/s
         mach_accel = 0.0   # /s
+        rate_hz    = sample_rate(state)
 
-        if len(self._ias_buf) == self._HALF_WIN * 2:
-            half    = self._HALF_WIN
+        if self._ias_buf.full:
             buf     = list(self._ias_buf)
+            half    = len(buf) // 2
             old_ias = sum(buf[:half]) / half
-            new_ias = sum(buf[half:]) / half
-            dt      = half / 30.0          # 2 seconds
+            new_ias = sum(buf[half:]) / len(buf[half:])
+            dt      = half / rate_hz
             ias_accel = (new_ias - old_ias) / dt
 
-        if self._mmo > 0 and len(self._mach_buf) == self._HALF_WIN * 2:
-            half      = self._HALF_WIN
+        if self._mmo > 0 and self._mach_buf.full:
             buf       = list(self._mach_buf)
+            half      = len(buf) // 2
             old_mach  = sum(buf[:half]) / half
-            new_mach  = sum(buf[half:]) / half
-            dt        = half / 30.0
+            new_mach  = sum(buf[half:]) / len(buf[half:])
+            dt        = half / rate_hz
             mach_accel = (new_mach - old_mach) / dt
 
         # ── Headroom ──────────────────────────────────────────────────────────
-        ias_headroom  = self._vmo - avg_ias
+        ias_headroom  = vmo - avg_ias
         mach_headroom = (self._mmo - mach) if self._mmo > 0 else float("inf")
 
         # ── Time-to-exceed (only meaningful when accelerating) ────────────────
@@ -116,7 +124,7 @@ class OverspeedModule:
         mach_tte = mach_headroom / mach_accel  if mach_accel > 0.001 else float("inf")
 
         # ── Alert decision ────────────────────────────────────────────────────
-        ias_over  = avg_ias >= self._vmo
+        ias_over  = avg_ias >= vmo
         mach_over = self._mmo > 0 and mach >= self._mmo
 
         ias_approaching = (
@@ -137,13 +145,13 @@ class OverspeedModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             ctx = self._context(
-                avg_ias, mach, ias_headroom, mach_headroom,
+                vmo, avg_ias, mach, ias_headroom, mach_headroom,
                 ias_tte, mach_tte, ias_over, mach_over
             )
             print(f"[ALERT] {alert}  {ctx}  phase={phase}")
@@ -157,13 +165,14 @@ class OverspeedModule:
     # ── helpers ───────────────────────────────────────────────────────────────
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
-            self._last_alert = None
+        if self._latch.current is not None:
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "OVERSPEED"})
 
     def _context(
         self,
+        vmo: float,
         ias: float, mach: float,
         ias_room: float, mach_room: float,
         ias_tte: float, mach_tte: float,
@@ -171,10 +180,10 @@ class OverspeedModule:
     ) -> str:
         parts = []
         if ias_over:
-            parts.append(f"IAS={ias:.1f} kts EXCEEDS VMO={self._vmo:.0f} kts")
+            parts.append(f"IAS={ias:.1f} kts EXCEEDS VMO={vmo:.0f} kts")
         else:
             tte_str = f"TTE={ias_tte:.0f}s" if ias_tte < self.APPROACH_SEC else ""
-            parts.append(f"IAS={ias:.1f}/{self._vmo:.0f} kts (Δ{ias_room:.1f} kts {tte_str})".strip())
+            parts.append(f"IAS={ias:.1f}/{vmo:.0f} kts (Δ{ias_room:.1f} kts {tte_str})".strip())
         if self._mmo > 0:
             if mach_over:
                 parts.append(f"M={mach:.3f} EXCEEDS MMO={self._mmo:.3f}")

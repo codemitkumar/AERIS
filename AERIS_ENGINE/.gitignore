@@ -2,5 +2,5 @@ __pycache__/
 *.py[cod]
 *.pyo
 
-# EUROCONTROL R&D dataset (R&D-use-only license, must not be redistributed)
-data/adrrData/
+# External research-data (EUROCONTROL, DASHlink, OpenSky) now lives outside
+# this tree entirely — see config/settings.py / README.md Section 7.6.

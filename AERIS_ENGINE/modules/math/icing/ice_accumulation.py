@@ -1,5 +1,7 @@
 import collections
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
+from core.rate import tick_dt
 
 
 class IceAccumulationModule:
@@ -17,9 +19,10 @@ class IceAccumulationModule:
     """
 
     _SUPPRESS_PHASES = frozenset({"GROUND_ROLL", "COMPLETE"})
-    _ACCUM_RATE_FULL = 1.0
-    _ACCUM_RATE_AI   = 0.2
-    _DISSIP_RATE     = 0.5
+    # Per second. These were per-tick, so ice built 30x faster at 30 Hz.
+    _ACCUM_RATE_FULL = 1.0 / 30.0
+    _ACCUM_RATE_AI   = 0.2 / 30.0
+    _DISSIP_RATE     = 0.5 / 30.0
     _WARN_LEVEL      = 30.0
     _CRIT_LEVEL      = 60.0
     _OAT_HIGH_C      = 5.0
@@ -41,7 +44,8 @@ class IceAccumulationModule:
     def __init__(self, ws=None, perf=None):
         self._ws    = ws
         self._level = 0.0
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -57,10 +61,12 @@ class IceAccumulationModule:
         anti_ice  = state.get("anti_ice", True)
         in_env    = self._OAT_LOW_C <= oat <= self._OAT_HIGH_C
 
+        dt = tick_dt(state)
         if in_env:
-            self._level += self._ACCUM_RATE_AI if anti_ice else self._ACCUM_RATE_FULL
+            rate = self._ACCUM_RATE_AI if anti_ice else self._ACCUM_RATE_FULL
+            self._level += rate * dt
         else:
-            self._level = max(0.0, self._level - self._DISSIP_RATE)
+            self._level = max(0.0, self._level - self._DISSIP_RATE * dt)
 
         state["ice_accumulation"] = round(self._level, 1)
 
@@ -71,16 +77,16 @@ class IceAccumulationModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(f"[ALERT] {alert}  level={self._level:.1f}  OAT={oat:.1f}°C  anti_ice={anti_ice}  phase={phase}")
             if self._ws:
                 await self._ws.broadcast_alert({**self._ALERT_MAP[alert], "topic": "alert"})
         else:
-            if self._level <= self._WARN_LEVEL and self._last_alert is None:
+            if self._level <= self._WARN_LEVEL and self._latch.current is None:
                 pass  # already cleared
             else:
                 print("[ALERT] ICE_ACCUM CLEAR — ice dissipating")
@@ -88,8 +94,8 @@ class IceAccumulationModule:
                     await self._ws.broadcast_alert({"topic": "alert_clear", "id": "ICE_ACCUM"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
+        if self._latch.current is not None:
             self._level      = 0.0
-            self._last_alert = None
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "ICE_ACCUM"})

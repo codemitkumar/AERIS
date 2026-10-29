@@ -1,6 +1,7 @@
 import math
-from collections import deque
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
+from core.rate import TimeWindow, window_len
 
 _G     = 9.81          # m/s²
 _FT2M  = 0.3048        # feet  → metres
@@ -30,7 +31,7 @@ class EnergyStateModule:
     """
 
     # Rolling window for dE/dt  (30 Hz × 3 s = 90 ticks)
-    _ENERGY_WINDOW = 90
+    _ENERGY_WINDOW_S = 3.0   # seconds of energy history
 
     # dE/dt thresholds [J/kg/s] — negative = losing energy
     # 100 J/kg/s ≈ losing the energy equivalent of a 2 000 ft/min descent + speed bleed
@@ -70,9 +71,10 @@ class EnergyStateModule:
 
     def __init__(self, ws=None):
         self._ws = ws
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
         # (simulation_time, E_sp) pairs for the dE/dt sliding window
-        self._energy_buf: deque[tuple[float, float]] = deque(maxlen=self._ENERGY_WINDOW)
+        self._energy_buf = TimeWindow(self._ENERGY_WINDOW_S)
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -86,14 +88,14 @@ class EnergyStateModule:
 
         if phase in self._GROUND_PHASES:
             self._energy_buf.clear()
-            if self._last_alert is not None:
-                self._last_alert = None
+            if self._latch.current is not None:
+                self._latch.reset()
                 if self._ws:
                     await self._ws.broadcast_alert({"topic": "alert_clear", "id": "ENERGY_STATE"})
             return
 
         E_sp = _specific_energy(alt_ft, tas_kts)
-        self._energy_buf.append((t, E_sp))
+        self._energy_buf.push(state, (t, E_sp))
 
         alert = None
 
@@ -119,9 +121,9 @@ class EnergyStateModule:
             if ke_fraction < self.LOW_KE_FRACTION and pitch >= self.HIGH_PITCH_DEG:
                 alert = "LOW_KE_HIGH_PITCH"
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(

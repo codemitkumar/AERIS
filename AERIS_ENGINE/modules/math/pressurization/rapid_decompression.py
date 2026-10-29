@@ -1,5 +1,6 @@
-import collections
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
+from core.rate import TimeWindow
 
 
 class RapidDecompressionModule:
@@ -14,7 +15,7 @@ class RapidDecompressionModule:
     """
 
     _SUPPRESS_PHASES = frozenset({"GROUND_ROLL", "ROTATION", "LANDING", "COMPLETE"})
-    _WINDOW          = 5          # ticks for rate calc (≈ 5 s at 1 Hz dispatch)
+    _WINDOW_S        = 1.5        # seconds of cabin-altitude history for the rate
     _WARN_RATE       = 500.0      # ft/min
     _CRIT_RATE       = 1_500.0
 
@@ -33,8 +34,9 @@ class RapidDecompressionModule:
 
     def __init__(self, ws=None, perf=None):
         self._ws    = ws
-        self._buf   = collections.deque(maxlen=self._WINDOW)
-        self._last_alert: str | None = None
+        self._buf   = TimeWindow(self._WINDOW_S)
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -47,13 +49,14 @@ class RapidDecompressionModule:
             return
 
         cabin_alt = state.get("cabin_alt_ft", 0.0)
-        self._buf.append(cabin_alt)
+        self._buf.push(state, cabin_alt)
 
-        if len(self._buf) < self._WINDOW:
+        if not self._buf.full:
             return
 
-        # Rate in ft/min: (newest − oldest) / window_ticks × 60
-        rate = (self._buf[-1] - self._buf[0]) / self._WINDOW * 60.0
+        # Over real elapsed seconds - dividing by tick count understated
+        # this ~30x at 30 Hz.
+        rate = (self._buf[-1] - self._buf[0]) / self._buf.span_s * 60.0
 
         if rate > self._CRIT_RATE:
             alert = "RAPID_DECOMP_CRITICAL"
@@ -62,9 +65,9 @@ class RapidDecompressionModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(f"[ALERT] {alert}  cabin_alt={cabin_alt:.0f} ft  rate={rate:.0f} ft/min  phase={phase}")
@@ -76,7 +79,7 @@ class RapidDecompressionModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "RAPID_DECOMP"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
-            self._last_alert = None
+        if self._latch.current is not None:
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "RAPID_DECOMP"})

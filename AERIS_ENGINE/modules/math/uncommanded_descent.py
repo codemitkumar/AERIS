@@ -1,5 +1,6 @@
-from collections import deque
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
+from core.rate import TimeWindow, window_len
 
 
 class UncommandedDescentModule:
@@ -15,9 +16,9 @@ class UncommandedDescentModule:
     wind shear, or flight control fault.
     """
 
-    # Rolling VS smoothing window (30 Hz × 2 s = 60 ticks)
-    # Averages out the ±50 ft/min ADC noise before comparing against thresholds
-    _VS_WINDOW = 60
+    # Real vertical speed carries ~1.3 ft/min of noise, so half a second
+    # averages cleaner than the 2 s this needed against synthetic data.
+    _VS_WINDOW_S = 0.5
 
     # Smoothed VS thresholds (ft/min, negative = descending)
     WARN_VS_FPM = -300   # modest but unexplained loss
@@ -46,8 +47,9 @@ class UncommandedDescentModule:
 
     def __init__(self, ws=None):
         self._ws = ws
-        self._last_alert: str | None = None
-        self._vs_buf: deque[float] = deque(maxlen=self._VS_WINDOW)
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
+        self._vs_buf = TimeWindow(self._VS_WINDOW_S)
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -62,17 +64,17 @@ class UncommandedDescentModule:
         if phase not in ("CLIMB", "CRUISE"):
             # Clear history so stale readings don't poison the next climb/cruise entry
             self._vs_buf.clear()
-            if self._last_alert is not None:
-                self._last_alert = None
+            if self._latch.current is not None:
+                self._latch.reset()
                 if self._ws:
                     await self._ws.broadcast_alert({"topic": "alert_clear", "id": "UNCOMMANDED_DES"})
             return
 
-        # Average both channels to halve the ±50 ft/min noise before smoothing
-        self._vs_buf.append((vs_cap + vs_fo) / 2.0)
+        # Average both channels to halve the sensor noise before smoothing
+        self._vs_buf.push(state, (vs_cap + vs_fo) / 2.0)
 
         # Require at least half the window to be populated before making a call
-        if len(self._vs_buf) < self._VS_WINDOW // 2:
+        if len(self._vs_buf) < window_len(state, self._VS_WINDOW_S) // 2:
             return
 
         avg_vs = sum(self._vs_buf) / len(self._vs_buf)
@@ -87,9 +89,9 @@ class UncommandedDescentModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(

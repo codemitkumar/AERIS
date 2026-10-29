@@ -1,5 +1,6 @@
-from collections import deque
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
+from core.rate import TimeWindow, sample_rate
 
 _FT_MIN_TO_MS = 0.3048 / 60.0   # ft/min → m/s
 _G_MS2        = 9.81             # m/s²
@@ -30,7 +31,9 @@ class StructuralAltitudeRateModule:
     """
 
     # ── Smoothing ─────────────────────────────────────────────────────────────
-    _SMOOTH_N = 30       # samples per window = 1 second at 30 Hz
+    # Recorded vertical speed is ~23x cleaner than the synthetic feed this was
+    # tuned against, so 0.3 s resolves jerk better than the old 1 s.
+    _SMOOTH_HALF_S = 0.3
     _PHASE_GUARD_S = 2.0 # seconds to suppress jerk after a phase change
 
     # ── Load-factor G thresholds ──────────────────────────────────────────────
@@ -86,9 +89,10 @@ class StructuralAltitudeRateModule:
 
     def __init__(self, ws=None):
         self._ws = ws
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
         # Rolling buffer holds two consecutive 1-second windows back-to-back
-        self._vs_buf: deque[float] = deque(maxlen=self._SMOOTH_N * 2)
+        self._vs_buf = TimeWindow(self._SMOOTH_HALF_S * 2)
         self._prev_phase: str = ""
         self._phase_change_t: float = -999.0
 
@@ -109,15 +113,15 @@ class StructuralAltitudeRateModule:
             self._vs_buf.clear()
 
         if phase in ("GROUND_ROLL", "ROTATION", "COMPLETE"):
-            if self._last_alert is not None:
-                self._last_alert = None
+            if self._latch.current is not None:
+                self._latch.reset()
                 for aid in ("G_LIMIT", "NEG_G", "ALT_JERK"):
                     if self._ws:
                         await self._ws.broadcast_alert({"topic": "alert_clear", "id": aid})
             return
 
         avg_vs_fpm = (vs_cap + vs_fo) / 2.0
-        self._vs_buf.append(avg_vs_fpm)
+        self._vs_buf.push(state, avg_vs_fpm)
 
         alert    = None
         jerk_g   = 0.0
@@ -125,12 +129,12 @@ class StructuralAltitudeRateModule:
 
         # ── Check 1: vertical jerk from smoothed VS ───────────────────────────
         # Only meaningful once both windows are fully populated and phase is stable
-        if phase_stable and len(self._vs_buf) == self._SMOOTH_N * 2:
-            half = self._SMOOTH_N
+        if phase_stable and self._vs_buf.full:
             buf  = list(self._vs_buf)
+            half = len(buf) // 2
             vs_old_ms = (sum(buf[:half]) / half) * _FT_MIN_TO_MS
-            vs_new_ms = (sum(buf[half:]) / half) * _FT_MIN_TO_MS
-            dt_s      = half / 30.0   # 1 second
+            vs_new_ms = (sum(buf[half:]) / len(buf[half:])) * _FT_MIN_TO_MS
+            dt_s      = half / sample_rate(state)
             jerk_g    = abs(vs_new_ms - vs_old_ms) / dt_s / _G_MS2
 
             if jerk_g >= self.JERK_CRIT_G:
@@ -148,9 +152,9 @@ class StructuralAltitudeRateModule:
         elif load_g >= self.G_POS_WARN and alert not in ("NEG_G_CRIT", "NEG_G_WARN", "G_EXCEED_CRIT"):
             alert = "G_EXCEED_WARN"
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(

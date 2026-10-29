@@ -1,0 +1,464 @@
+{
+  "flight": "652200306252041.mat",
+  "ticks": 20000,
+  "budget_ms": 62.5,
+  "per_module": [
+    {
+      "module": "DiversionDecisionModule",
+      "mean_us": 2019.38,
+      "p50_us": 776.9,
+      "p99_us": 2903.0,
+      "max_us": 529505.4,
+      "total_ms": 40387.5
+    },
+    {
+      "module": "RapidAltitudeLossModule",
+      "mean_us": 65.82,
+      "p50_us": 65.0,
+      "p99_us": 158.4,
+      "max_us": 4208.6,
+      "total_ms": 1316.4
+    },
+    {
+      "module": "AircraftHealthModule",
+      "mean_us": 37.98,
+      "p50_us": 36.1,
+      "p99_us": 87.3,
+      "max_us": 3092.9,
+      "total_ms": 759.7
+    },
+    {
+      "module": "OverspeedModule",
+      "mean_us": 26.72,
+      "p50_us": 24.9,
+      "p99_us": 56.9,
+      "max_us": 3163.1,
+      "total_ms": 534.4
+    },
+    {
+      "module": "EnergyStateModule",
+      "mean_us": 11.44,
+      "p50_us": 11.0,
+      "p99_us": 31.1,
+      "max_us": 1264.1,
+      "total_ms": 228.9
+    },
+    {
+      "module": "StructuralAltitudeRateModule",
+      "mean_us": 11.21,
+      "p50_us": 10.8,
+      "p99_us": 27.8,
+      "max_us": 2918.7,
+      "total_ms": 224.2
+    },
+    {
+      "module": "AltimeterSettingModule",
+      "mean_us": 9.65,
+      "p50_us": 9.3,
+      "p99_us": 22.2,
+      "max_us": 461.6,
+      "total_ms": 192.9
+    },
+    {
+      "module": "EfficiencyTrendModule",
+      "mean_us": 9.05,
+      "p50_us": 8.9,
+      "p99_us": 17.6,
+      "max_us": 2068.0,
+      "total_ms": 181.1
+    },
+    {
+      "module": "UncommandedDescentModule",
+      "mean_us": 8.84,
+      "p50_us": 8.6,
+      "p99_us": 19.2,
+      "max_us": 2053.7,
+      "total_ms": 176.8
+    },
+    {
+      "module": "FuelLeakDetectionModule",
+      "mean_us": 7.63,
+      "p50_us": 7.5,
+      "p99_us": 16.2,
+      "max_us": 2109.6,
+      "total_ms": 152.5
+    },
+    {
+      "module": "RapidDecompressionModule",
+      "mean_us": 7.03,
+      "p50_us": 6.8,
+      "p99_us": 12.8,
+      "max_us": 2063.2,
+      "total_ms": 140.6
+    },
+    {
+      "module": "SustainedGModule",
+      "mean_us": 7.02,
+      "p50_us": 7.0,
+      "p99_us": 14.3,
+      "max_us": 324.8,
+      "total_ms": 140.5
+    },
+    {
+      "module": "FuelExhaustionModule",
+      "mean_us": 6.8,
+      "p50_us": 6.7,
+      "p99_us": 13.2,
+      "max_us": 3046.5,
+      "total_ms": 136.0
+    },
+    {
+      "module": "IceAccumulationModule",
+      "mean_us": 6.23,
+      "p50_us": 6.0,
+      "p99_us": 13.1,
+      "max_us": 2132.8,
+      "total_ms": 124.6
+    },
+    {
+      "module": "GlideRangeModule",
+      "mean_us": 5.88,
+      "p50_us": 5.1,
+      "p99_us": 12.5,
+      "max_us": 8108.1,
+      "total_ms": 117.6
+    },
+    {
+      "module": "DensityAltitudeModule",
+      "mean_us": 5.72,
+      "p50_us": 5.1,
+      "p99_us": 9.3,
+      "max_us": 2734.6,
+      "total_ms": 114.5
+    },
+    {
+      "module": "EnduranceCalculatorModule",
+      "mean_us": 5.38,
+      "p50_us": 5.4,
+      "p99_us": 8.9,
+      "max_us": 786.0,
+      "total_ms": 107.5
+    },
+    {
+      "module": "CompressorStallModule",
+      "mean_us": 4.39,
+      "p50_us": 4.3,
+      "p99_us": 8.3,
+      "max_us": 815.0,
+      "total_ms": 87.8
+    },
+    {
+      "module": "FuelImbalanceModule",
+      "mean_us": 3.81,
+      "p50_us": 3.7,
+      "p99_us": 6.8,
+      "max_us": 2048.7,
+      "total_ms": 76.2
+    },
+    {
+      "module": "N1DisagreeModule",
+      "mean_us": 3.62,
+      "p50_us": 3.2,
+      "p99_us": 6.0,
+      "max_us": 2861.0,
+      "total_ms": 72.3
+    },
+    {
+      "module": "EGTOvertempModule",
+      "mean_us": 3.62,
+      "p50_us": 3.4,
+      "p99_us": 6.4,
+      "max_us": 2692.2,
+      "total_ms": 72.4
+    },
+    {
+      "module": "UnreliableSpeedModule",
+      "mean_us": 3.4,
+      "p50_us": 3.3,
+      "p99_us": 5.6,
+      "max_us": 659.4,
+      "total_ms": 67.9
+    },
+    {
+      "module": "ThrustAsymmetryModule",
+      "mean_us": 3.39,
+      "p50_us": 3.3,
+      "p99_us": 5.8,
+      "max_us": 378.2,
+      "total_ms": 67.8
+    },
+    {
+      "module": "EngineFailureModule",
+      "mean_us": 3.29,
+      "p50_us": 3.1,
+      "p99_us": 5.3,
+      "max_us": 2048.7,
+      "total_ms": 65.9
+    },
+    {
+      "module": "GearOverspeedModule",
+      "mean_us": 3.16,
+      "p50_us": 2.7,
+      "p99_us": 5.2,
+      "max_us": 2057.0,
+      "total_ms": 63.1
+    },
+    {
+      "module": "TerrainClosureModule",
+      "mean_us": 2.98,
+      "p50_us": 2.3,
+      "p99_us": 10.5,
+      "max_us": 2044.9,
+      "total_ms": 59.6
+    },
+    {
+      "module": "AltimeterCrossCheckModule",
+      "mean_us": 2.96,
+      "p50_us": 2.7,
+      "p99_us": 4.9,
+      "max_us": 4064.0,
+      "total_ms": 59.2
+    },
+    {
+      "module": "ManeuveringSpeedModule",
+      "mean_us": 2.84,
+      "p50_us": 2.7,
+      "p99_us": 4.8,
+      "max_us": 611.9,
+      "total_ms": 56.7
+    },
+    {
+      "module": "AltitudeLossTakeoffModule",
+      "mean_us": 2.72,
+      "p50_us": 2.5,
+      "p99_us": 5.7,
+      "max_us": 2059.2,
+      "total_ms": 54.3
+    },
+    {
+      "module": "UnusualAttitudeModule",
+      "mean_us": 2.68,
+      "p50_us": 2.5,
+      "p99_us": 4.7,
+      "max_us": 2040.5,
+      "total_ms": 53.6
+    },
+    {
+      "module": "IcingConditionsModule",
+      "mean_us": 2.51,
+      "p50_us": 2.3,
+      "p99_us": 4.8,
+      "max_us": 560.0,
+      "total_ms": 50.3
+    },
+    {
+      "module": "BankAngleModule",
+      "mean_us": 2.43,
+      "p50_us": 2.4,
+      "p99_us": 4.2,
+      "max_us": 179.1,
+      "total_ms": 48.6
+    },
+    {
+      "module": "PitchLimitModule",
+      "mean_us": 2.39,
+      "p50_us": 2.2,
+      "p99_us": 4.2,
+      "max_us": 2055.4,
+      "total_ms": 47.9
+    },
+    {
+      "module": "StallWarningModule",
+      "mean_us": 2.29,
+      "p50_us": 2.2,
+      "p99_us": 4.4,
+      "max_us": 948.6,
+      "total_ms": 45.7
+    },
+    {
+      "module": "SideslipModule",
+      "mean_us": 2.29,
+      "p50_us": 2.2,
+      "p99_us": 4.6,
+      "max_us": 223.5,
+      "total_ms": 45.9
+    },
+    {
+      "module": "MinDiversionFuelModule",
+      "mean_us": 2.2,
+      "p50_us": 2.2,
+      "p99_us": 4.3,
+      "max_us": 125.4,
+      "total_ms": 44.0
+    },
+    {
+      "module": "VrefMonitorModule",
+      "mean_us": 2.04,
+      "p50_us": 1.9,
+      "p99_us": 3.6,
+      "max_us": 506.7,
+      "total_ms": 40.7
+    },
+    {
+      "module": "ExcessiveSinkRateModule",
+      "mean_us": 2.04,
+      "p50_us": 2.0,
+      "p99_us": 3.4,
+      "max_us": 495.7,
+      "total_ms": 40.9
+    },
+    {
+      "module": "BestGlideSpeedModule",
+      "mean_us": 2.01,
+      "p50_us": 1.9,
+      "p99_us": 3.6,
+      "max_us": 188.7,
+      "total_ms": 40.2
+    },
+    {
+      "module": "AntiIceOffModule",
+      "mean_us": 1.95,
+      "p50_us": 1.9,
+      "p99_us": 3.5,
+      "max_us": 161.4,
+      "total_ms": 39.0
+    },
+    {
+      "module": "DiffPressureModule",
+      "mean_us": 1.93,
+      "p50_us": 1.9,
+      "p99_us": 3.5,
+      "max_us": 397.1,
+      "total_ms": 38.5
+    },
+    {
+      "module": "CabinAltitudeModule",
+      "mean_us": 1.8,
+      "p50_us": 1.7,
+      "p99_us": 3.2,
+      "max_us": 563.8,
+      "total_ms": 36.0
+    },
+    {
+      "module": "EmergencyDescentModule",
+      "mean_us": 1.79,
+      "p50_us": 1.5,
+      "p99_us": 2.8,
+      "max_us": 2075.4,
+      "total_ms": 35.8
+    },
+    {
+      "module": "FlapOverspeedModule",
+      "mean_us": 1.72,
+      "p50_us": 1.5,
+      "p99_us": 3.3,
+      "max_us": 1203.0,
+      "total_ms": 34.4
+    },
+    {
+      "module": "FuelEfficiencyModule",
+      "mean_us": 1.65,
+      "p50_us": 1.6,
+      "p99_us": 3.1,
+      "max_us": 141.8,
+      "total_ms": 32.9
+    },
+    {
+      "module": "GlideslopeDeviationModule",
+      "mean_us": 1.63,
+      "p50_us": 1.5,
+      "p99_us": 2.9,
+      "max_us": 809.4,
+      "total_ms": 32.7
+    },
+    {
+      "module": "UnstableApproachModule",
+      "mean_us": 1.57,
+      "p50_us": 1.5,
+      "p99_us": 2.7,
+      "max_us": 123.3,
+      "total_ms": 31.4
+    },
+    {
+      "module": "TakeoffPerformanceModule",
+      "mean_us": 1.53,
+      "p50_us": 1.5,
+      "p99_us": 2.6,
+      "max_us": 134.7,
+      "total_ms": 30.6
+    },
+    {
+      "module": "TailwindModule",
+      "mean_us": 1.46,
+      "p50_us": 1.2,
+      "p99_us": 2.2,
+      "max_us": 2054.5,
+      "total_ms": 29.2
+    },
+    {
+      "module": "GoAroundAdvisoryModule",
+      "mean_us": 1.46,
+      "p50_us": 1.4,
+      "p99_us": 2.5,
+      "max_us": 114.1,
+      "total_ms": 29.1
+    },
+    {
+      "module": "LowSpeedAlertModule",
+      "mean_us": 1.43,
+      "p50_us": 1.3,
+      "p99_us": 2.2,
+      "max_us": 2865.3,
+      "total_ms": 28.7
+    },
+    {
+      "module": "CrosswindLimitModule",
+      "mean_us": 1.28,
+      "p50_us": 1.2,
+      "p99_us": 2.2,
+      "max_us": 301.7,
+      "total_ms": 25.5
+    },
+    {
+      "module": "CruiseAltitudeModule",
+      "mean_us": 1.28,
+      "p50_us": 1.2,
+      "p99_us": 2.4,
+      "max_us": 483.1,
+      "total_ms": 25.7
+    },
+    {
+      "module": "UnsafeConfigModule",
+      "mean_us": 1.24,
+      "p50_us": 1.2,
+      "p99_us": 2.3,
+      "max_us": 237.5,
+      "total_ms": 24.8
+    },
+    {
+      "module": "GlideslopeBelowModule",
+      "mean_us": 1.23,
+      "p50_us": 1.2,
+      "p99_us": 2.1,
+      "max_us": 553.4,
+      "total_ms": 24.5
+    },
+    {
+      "module": "LowEnergyModule",
+      "mean_us": 1.16,
+      "p50_us": 1.1,
+      "p99_us": 2.0,
+      "max_us": 111.7,
+      "total_ms": 23.1
+    }
+  ],
+  "detection_count": 54,
+  "detection_mean_us": 5.252,
+  "detection_total_us": 283.59,
+  "downstream_total_us": 2057.36,
+  "tick_p50_ms": 1.5036,
+  "tick_p99_ms": 4.5026,
+  "tick_max_ms": 530.2962,
+  "deadline_misses": 81,
+  "deadline_miss_pct": 0.405
+}

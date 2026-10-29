@@ -78,6 +78,7 @@ _ALERT_SUBSYSTEM: dict[str, str] = {
     "PITCH_LIMIT":     "attitude",
     "G_LOAD":          "attitude",
     "SIDESLIP":        "attitude",
+    "TAIL_STRIKE":     "attitude",
     # Pressurization
     "CABIN_ALT":       "pressurization",
     "RAPID_DECOMP":    "pressurization",

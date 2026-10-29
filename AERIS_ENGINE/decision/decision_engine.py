@@ -98,7 +98,12 @@ class DiversionDecisionModule:
         # turn check on ~3 candidates. Falls back to a full rescan only if
         # none of the 3 survive.
         shortlist_icaos = {c["icao"] for c in self._shortlist.get(severity, [])}
-        pool = [a for a in self._airports if a["icao"] in shortlist_icaos] or self._airports
+        # Origin and destination always get re-verified: the background
+        # shortlist is built with no conditions, so it has no anchoring, and
+        # a field that's behind you after a go-around can drop off it.
+        anchors = {state.get("origin_icao"), state.get("destination_icao")} - {None, ""}
+        pool = [a for a in self._airports
+                if a["icao"] in shortlist_icaos or a["icao"] in anchors] or self._airports
 
         candidates = self._selector.select(
             state, pool,

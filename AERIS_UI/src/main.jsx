@@ -3,8 +3,12 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 import SimulateMap from './Screens/SimulateMap.jsx'
+import ControlPanel from './Screens/ControlPanel.jsx'
 
-const Root = window.location.pathname.startsWith('/simulateMap') ? SimulateMap : App
+const path = window.location.pathname
+const Root = path.startsWith('/simulateMap') ? SimulateMap
+  : path.startsWith('/controlPanel') ? ControlPanel
+  : App
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

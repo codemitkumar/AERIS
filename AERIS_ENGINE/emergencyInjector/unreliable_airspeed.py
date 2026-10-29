@@ -1,38 +1,42 @@
 class UnreliableAirspeedInjector:
     """Injects a drifting IAS error that accumulates each simulation tick.
 
-    Attach once to FlightGenerator as emergency_fn, then call start()/stop()
+    Attach once to the flight source as emergency_fn, then call start()/stop()
     at any point during flight to enable or clear the fault.
 
     Drift model
     -----------
-    Each tick the indicated speed is scaled by (1 + cumulative_drift / 100).
-    With rate=-0.1 at 30 Hz the reading drops ~3 % per second, ~18 % per minute.
+    The indicated speed is scaled by (1 + cumulative_drift / 100), and the
+    drift grows at `rate` percent per second. Rate is per second rather than
+    per tick so the same setting behaves identically on a 30 Hz synthetic
+    feed and a 16 Hz FDR replay.
 
     Examples
     --------
     Captain pitot icing (default):
-        injector = UnreliableAirspeedInjector(side="captain", rate=-0.1)
+        injector = UnreliableAirspeedInjector(side="captain", rate=-3.0)
 
     FO over-reading:
-        injector = UnreliableAirspeedInjector(side="fo", rate=+0.05)
+        injector = UnreliableAirspeedInjector(side="fo", rate=+1.5)
 
     Both sides failing (total pitot loss scenario):
-        injector = UnreliableAirspeedInjector(side="both", rate=-0.1)
+        injector = UnreliableAirspeedInjector(side="both", rate=-3.0)
 
     Terminal commands (type while simulation is running):
-        inject captain -0.1
-        inject fo 0.05
-        inject both -0.1
+        inject captain -3.0
+        inject fo 1.5
+        inject both -3.0
         clear
     """
 
-    def __init__(self, side: str = "captain", rate: float = -0.1):
+    NAME = "Unreliable Airspeed"
+
+    def __init__(self, side: str = "captain", rate: float = -3.0):
         """
         Parameters
         ----------
         side : "captain" | "fo" | "both"
-        rate : drift added per tick in percent  (negative = under-read)
+        rate : drift added per second in percent  (negative = under-read)
         """
         if side not in ("captain", "fo", "both"):
             raise ValueError(f"side must be 'captain', 'fo', or 'both', got '{side}'")
@@ -57,7 +61,7 @@ class UnreliableAirspeedInjector:
         self.active = True
         print(
             f"[INJECT] unreliable_airspeed  side={self.side}  "
-            f"rate={self.rate:+.2f}%/tick  (~{self.rate * 30:+.1f}%/s)"
+            f"rate={self.rate:+.2f} %/s"
         )
 
     def stop(self) -> None:
@@ -76,11 +80,11 @@ class UnreliableAirspeedInjector:
     # ── emergency_fn interface ────────────────────────────────────────────────
 
     def __call__(self, state: dict, gen) -> None:
-        """Called by FlightGenerator.step() on every tick."""
+        """Called by the flight source's step() on every tick."""
         if not self.active:
             return
 
-        self._drift += self.rate
+        self._drift += self.rate * getattr(gen, "dt", 1.0 / 30.0)
         factor = 1.0 + self._drift / 100.0
 
         if self.side in ("captain", "both"):

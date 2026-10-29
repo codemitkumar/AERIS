@@ -1,3 +1,4 @@
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
 
 
@@ -38,7 +39,8 @@ class TakeoffPerformanceModule:
         self._v1_kts     = (perf.v1_kts   if perf else 0.0) or 0.0
         self._vr_kts     = (perf.vr_kts   if perf else 0.0) or 0.0
         self._roll_ticks = 0
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -51,7 +53,7 @@ class TakeoffPerformanceModule:
 
         if phase != self._ACTIVE_PHASE:
             self._roll_ticks = 0
-            if self._last_alert:
+            if self._latch.current:
                 await self._clear()
             return
 
@@ -64,7 +66,7 @@ class TakeoffPerformanceModule:
         v1 = self._v1_kts if self._v1_kts > 0 else 120.0
 
         if ias >= v1:
-            if self._last_alert:
+            if self._latch.current:
                 await self._clear()
             return
 
@@ -75,9 +77,9 @@ class TakeoffPerformanceModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(f"[ALERT] {alert}  IAS={ias:.0f}  V1={v1:.0f}  roll_ticks={self._roll_ticks}  throttle={throttle:.0f}%")
@@ -89,8 +91,8 @@ class TakeoffPerformanceModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "TKOF_PERF"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
+        if self._latch.current is not None:
             self._roll_ticks = 0
-            self._last_alert = None
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "TKOF_PERF"})

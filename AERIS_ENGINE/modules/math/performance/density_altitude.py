@@ -1,3 +1,4 @@
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
 
 
@@ -36,7 +37,8 @@ class DensityAltitudeModule:
 
     def __init__(self, ws=None, perf=None):
         self._ws = ws
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -57,7 +59,7 @@ class DensityAltitudeModule:
         state["isa_dev_c"]      = round(oat - isa_c, 1)
 
         if phase not in self._ACTIVE_PHASES:
-            if self._last_alert:
+            if self._latch.current:
                 await self._clear()
             return
 
@@ -68,9 +70,9 @@ class DensityAltitudeModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(f"[ALERT] {alert}  density_alt={density_alt:.0f}  press_alt={alt:.0f}  excess={excess:.0f} ft  OAT={oat:.1f}°C")
@@ -82,7 +84,7 @@ class DensityAltitudeModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "DENSITY_ALT"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
-            self._last_alert = None
+        if self._latch.current is not None:
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "DENSITY_ALT"})

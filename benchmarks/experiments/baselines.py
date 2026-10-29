@@ -129,7 +129,8 @@ def fixed_mcda(state, airports, is_transport=True, vref_kts=140.0, top_n=3,
     cascade, so an infeasible query returns an empty list rather than a
     degraded answer."""
     active_conditions = active_conditions or []
-    max_turn_deg, fuel_burn_mult, fuel_margin_buf, prefer_larger = _resolve_modifiers(
+    # return_to_field is an anchoring rule, which this baseline doesn't use.
+    max_turn_deg, fuel_burn_mult, fuel_margin_buf, prefer_larger, _ = _resolve_modifiers(
         active_conditions, _DEFAULT_CONDITION_MODIFIERS
     )
     ctx = _build_ctx(state, is_transport, vref_kts)

@@ -1,19 +1,25 @@
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
 
 
 class VrefMonitorModule:
     """GLI-5 — VREF Approach Speed Monitor.
 
-    Monitors speed relative to VREF on final approach (DESCENT phase,
-    alt < 3 000 ft, gear down).  Published tolerance is VREF +10/−0 kts.
+    Monitors speed relative to VREF on short final, gear down. Published
+    tolerance is VREF +10/−0 kts.
 
     WARN  IAS > VREF + 15 kts  (too fast — extended landing distance)
          OR IAS < VREF − 5 kts  (too slow — margin eroded)
     CRIT  IAS > VREF + 25 kts  (dangerously fast for landing)
          OR IAS < VREF          (below reference speed — immediate action)
+
+    Gated at 1 000 ft AGL, matching stabilised-approach criteria. Above that an
+    aircraft is still decelerating and is legitimately fast: real approaches
+    cross 1 000 ft around VREF+25 and bleed off from there, so checking from
+    3 000 ft flagged every normal landing.
     """
 
-    _MAX_ALT_FT = 3_000.0
+    _MAX_AGL_FT = 1_000.0
 
     _ALERT_MAP = {
         "VREF_FAST_WARNING": {
@@ -40,21 +46,25 @@ class VrefMonitorModule:
 
     def __init__(self, ws=None, perf=None):
         self._ws   = ws
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
 
     async def on_state(self, state: dict) -> None:
         phase = state.get("phase", "")
-        alt   = state.get("alt_captain", 0.0)
         gear  = state.get("gear", "UP")
         vref  = state.get("vref_kts", 0.0)
+        # Height above ground, not above sea level - a 3 000 ft field elevation
+        # would otherwise keep this suppressed for the whole approach.
+        agl = state.get("radio_alt_ft", state.get("alt_captain", 0.0))
 
         if phase == "COMPLETE":
             await self._clear(); return
-        if phase != "DESCENT" or alt > self._MAX_ALT_FT or gear != "DOWN" or vref <= 0:
-            if self._last_alert:
+        if phase not in ("DESCENT", "LANDING") or agl > self._MAX_AGL_FT \
+                or gear != "DOWN" or vref <= 0:
+            if self._latch.current:
                 await self._clear()
             return
 
@@ -71,9 +81,9 @@ class VrefMonitorModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(f"[ALERT] {alert}  IAS={ias:.1f}  VREF={vref:.0f}  Δ={ias-vref:+.1f}  alt={alt:.0f} ft")
@@ -85,7 +95,7 @@ class VrefMonitorModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "VREF"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
-            self._last_alert = None
+        if self._latch.current is not None:
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "VREF"})

@@ -1,3 +1,4 @@
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
 
 
@@ -36,7 +37,8 @@ class AltitudeLossTakeoffModule:
         self._ws      = ws
         self._peak_ft = 0.0
         self._active  = False
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -59,7 +61,7 @@ class AltitudeLossTakeoffModule:
             self._peak_ft = max(self._peak_ft, ra)
         elif phase not in self._ACTIVE_PHASES:
             self._active = False
-            if self._last_alert:
+            if self._latch.current:
                 await self._clear()
             return
 
@@ -75,9 +77,9 @@ class AltitudeLossTakeoffModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(f"[ALERT] {alert}  RA={ra:.0f}  peak={self._peak_ft:.0f}  drop={drop:.0f} ft  phase={phase}")
@@ -89,7 +91,7 @@ class AltitudeLossTakeoffModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "ALT_LOSS_TKOF"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
-            self._last_alert = None
+        if self._latch.current is not None:
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "ALT_LOSS_TKOF"})

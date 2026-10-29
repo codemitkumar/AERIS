@@ -1,5 +1,6 @@
-from collections import deque
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
+from core.rate import TimeWindow, window_len
 
 
 class RapidAltitudeLossModule:
@@ -16,7 +17,7 @@ class RapidAltitudeLossModule:
     """
 
     # Rolling history depth (30 Hz × 20 s)
-    _WINDOW_TICKS = 600
+    _WINDOW_S     = 20.0   # seconds of altitude history
 
     WARN_LOSS_FT = 1_000   # ft lost vs window peak
     CRIT_LOSS_FT = 2_000
@@ -41,9 +42,10 @@ class RapidAltitudeLossModule:
 
     def __init__(self, ws=None):
         self._ws = ws
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
         # (time, pressure_alt_ft) pairs; maxlen auto-evicts oldest
-        self._alt_history: deque[tuple[float, float]] = deque(maxlen=self._WINDOW_TICKS)
+        self._alt_history = TimeWindow(self._WINDOW_S)
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -57,13 +59,13 @@ class RapidAltitudeLossModule:
 
         if phase in ("GROUND_ROLL", "ROTATION", "COMPLETE") or alt < self.MIN_ALT_FT:
             self._alt_history.clear()
-            if self._last_alert is not None:
-                self._last_alert = None
+            if self._latch.current is not None:
+                self._latch.reset()
                 if self._ws:
                     await self._ws.broadcast_alert({"topic": "alert_clear", "id": "RAPID_ALT_LOSS"})
             return
 
-        self._alt_history.append((t, alt))
+        self._alt_history.push(state, (t, alt))
 
         if len(self._alt_history) < 2:
             return
@@ -78,9 +80,9 @@ class RapidAltitudeLossModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             window_s = t - self._alt_history[0][0]

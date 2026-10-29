@@ -1,3 +1,4 @@
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
 
 
@@ -40,7 +41,8 @@ class ThrustAsymmetryModule:
         self._ws           = ws
         self._engine_count = perf.engine_count if perf else 2
         self._vs_kts       = perf.vs_kts       if perf else 120.0
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -67,9 +69,9 @@ class ThrustAsymmetryModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(f"[ALERT] {alert}  n1={n1_list}  spread={spread:.1f}%  IAS={ias:.0f}  phase={phase}")
@@ -81,7 +83,7 @@ class ThrustAsymmetryModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "THRUST_ASYM"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
-            self._last_alert = None
+        if self._latch.current is not None:
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "THRUST_ASYM"})

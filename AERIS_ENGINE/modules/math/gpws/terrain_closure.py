@@ -1,5 +1,6 @@
-import collections
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
+from core.rate import TimeWindow
 
 
 class TerrainClosureModule:
@@ -16,7 +17,9 @@ class TerrainClosureModule:
     _MAX_RA_FT       = 2_500.0
     _WARN_RATE       = 1_500.0
     _CRIT_RATE       = 3_000.0
-    _WINDOW          = 3
+    # Recorded radio altitude steps by up to 10 ft between samples, so a
+    # shorter window turns quantisation into thousands of ft/min of closure.
+    _WINDOW_S        = 1.0
 
     _ALERT_MAP = {
         "TERRAIN_CLOSURE_WARN": {
@@ -33,8 +36,9 @@ class TerrainClosureModule:
 
     def __init__(self, ws=None, perf=None):
         self._ws  = ws
-        self._buf = collections.deque(maxlen=self._WINDOW)
-        self._last_alert: str | None = None
+        self._buf = TimeWindow(self._WINDOW_S)
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -47,15 +51,20 @@ class TerrainClosureModule:
             return
 
         ra = state.get("radio_alt_ft", state.get("alt_captain", 99999.0))
-        self._buf.append(ra)
+        self._buf.push(state, ra)
 
-        if ra > self._MAX_RA_FT or len(self._buf) < self._WINDOW:
-            if self._last_alert:
+        if ra > self._MAX_RA_FT or not self._buf.full:
+            if self._latch.current:
                 await self._clear()
             return
 
-        # Closure rate = drop in radio altitude per minute
-        closure = (self._buf[0] - self._buf[-1]) / self._WINDOW * 60.0
+        # Between the means of the two halves so quantisation cancels, over
+        # real elapsed seconds - dividing by tick count understated this 30x.
+        buf = list(self._buf)
+        half = len(buf) // 2
+        old = sum(buf[:half]) / half
+        new = sum(buf[half:]) / len(buf[half:])
+        closure = (old - new) / (self._buf.span_s / 2.0) * 60.0
 
         if closure > self._CRIT_RATE:
             alert = "TERRAIN_CLOSURE_CRIT"
@@ -64,9 +73,9 @@ class TerrainClosureModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(f"[ALERT] {alert}  closure={closure:.0f} ft/min  RA={ra:.0f} ft  phase={phase}")
@@ -78,7 +87,7 @@ class TerrainClosureModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "TERRAIN_CLOSURE"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
-            self._last_alert = None
+        if self._latch.current is not None:
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "TERRAIN_CLOSURE"})

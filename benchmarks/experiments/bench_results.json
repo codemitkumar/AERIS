@@ -1,0 +1,134 @@
+{
+  "flight": "652200306252041.mat",
+  "sample_rate_hz": 16.0,
+  "tick_budget_ms": 62.5,
+  "modules": 56,
+  "ticks_per_point": 4000,
+  "python": "3.14.5",
+  "scaling": [
+    {
+      "modules": 1,
+      "n": 4000,
+      "mean_ms": 0.0911,
+      "p50_ms": 0.076,
+      "p95_ms": 0.1255,
+      "p99_ms": 0.2241,
+      "max_ms": 4.0912
+    },
+    {
+      "modules": 5,
+      "n": 4000,
+      "mean_ms": 0.1633,
+      "p50_ms": 0.1515,
+      "p95_ms": 0.2124,
+      "p99_ms": 0.3043,
+      "max_ms": 3.0281
+    },
+    {
+      "modules": 10,
+      "n": 4000,
+      "mean_ms": 0.2235,
+      "p50_ms": 0.2151,
+      "p95_ms": 0.3232,
+      "p99_ms": 0.4664,
+      "max_ms": 2.9008
+    },
+    {
+      "modules": 20,
+      "n": 4000,
+      "mean_ms": 0.1945,
+      "p50_ms": 0.1636,
+      "p95_ms": 0.3249,
+      "p99_ms": 0.4322,
+      "max_ms": 2.0373
+    },
+    {
+      "modules": 30,
+      "n": 4000,
+      "mean_ms": 0.2675,
+      "p50_ms": 0.2204,
+      "p95_ms": 0.4287,
+      "p99_ms": 0.6026,
+      "max_ms": 1.7804
+    },
+    {
+      "modules": 40,
+      "n": 4000,
+      "mean_ms": 0.3242,
+      "p50_ms": 0.2734,
+      "p95_ms": 0.5294,
+      "p99_ms": 0.6504,
+      "max_ms": 3.3974
+    },
+    {
+      "modules": 56,
+      "n": 4000,
+      "mean_ms": 2.3616,
+      "p50_ms": 1.6777,
+      "p95_ms": 2.2653,
+      "p99_ms": 6.592,
+      "max_ms": 261.0103
+    }
+  ],
+  "determinism": {
+    "runs": 5,
+    "events_per_run": [
+      17,
+      17,
+      17,
+      17,
+      17
+    ],
+    "identical": true,
+    "events": 17
+  },
+  "await_audit": {
+    "handlers": 55,
+    "write_after_await": 11,
+    "offenders": [
+      "math\\altimeter_setting.py",
+      "math\\approach\\crosswind_limit.py",
+      "math\\approach\\tailwind.py",
+      "math\\fuel\\endurance_calculator.py",
+      "math\\fuel\\fuel_efficiency.py",
+      "math\\fuel\\fuel_exhaustion.py",
+      "math\\glide\\glide_range.py",
+      "math\\glide\\glideslope_deviation.py",
+      "math\\icing\\ice_accumulation.py",
+      "math\\icing\\icing_conditions.py",
+      "math\\performance\\density_altitude.py"
+    ]
+  },
+  "isolation": {
+    "ticks_completed": 300,
+    "ticks_requested": 300,
+    "alerts_still_produced": 2,
+    "slow_module_invocations": 300,
+    "latency_with_faulty_modules": {
+      "n": 300,
+      "mean_ms": 60.565,
+      "p50_ms": 62.5561,
+      "p95_ms": 65.488,
+      "p99_ms": 66.5621,
+      "max_ms": 66.9172
+    }
+  },
+  "memory": {
+    "samples": [
+      {
+        "tick": 1000,
+        "current_kb": 29985.9
+      },
+      {
+        "tick": 2000,
+        "current_kb": 29986.2
+      },
+      {
+        "tick": 3000,
+        "current_kb": 29987.2
+      }
+    ],
+    "final_kb": 29987.5,
+    "peak_kb": 53805.0
+  }
+}

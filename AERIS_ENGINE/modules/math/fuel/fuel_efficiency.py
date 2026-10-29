@@ -1,5 +1,6 @@
-import collections
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
+from core.rate import TimeWindow, window_len
 
 
 class FuelEfficiencyModule:
@@ -18,7 +19,7 @@ class FuelEfficiencyModule:
     """
 
     _SUPPRESS_PHASES  = frozenset({"GROUND_ROLL", "ROTATION", "CLIMB", "DESCENT", "LANDING", "COMPLETE"})
-    _BASELINE_TICKS   = 60
+    _BASELINE_S       = 2.0  # seconds of cruise baseline
     _WARN_RATIO       = 0.90
     _CRIT_RATIO       = 0.80
 
@@ -38,8 +39,9 @@ class FuelEfficiencyModule:
     def __init__(self, ws=None, perf=None):
         self._ws       = ws
         self._baseline = None
-        self._buf      = collections.deque(maxlen=self._BASELINE_TICKS)
-        self._last_alert: str | None = None
+        self._buf      = TimeWindow(self._BASELINE_S)
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -51,7 +53,7 @@ class FuelEfficiencyModule:
 
         if phase not in ("CRUISE",):
             if phase in self._SUPPRESS_PHASES and phase != "CRUISE":
-                if self._last_alert:
+                if self._latch.current:
                     await self._clear()
                 return
 
@@ -64,8 +66,8 @@ class FuelEfficiencyModule:
         sr = gs / flow
 
         if self._baseline is None:
-            self._buf.append(sr)
-            if len(self._buf) == self._BASELINE_TICKS:
+            self._buf.push(state, sr)
+            if self._buf.full:
                 self._baseline = sum(self._buf) / len(self._buf)
             return
 
@@ -80,9 +82,9 @@ class FuelEfficiencyModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(f"[ALERT] {alert}  SR={sr:.4f}  baseline={self._baseline:.4f}  ratio={ratio:.2f}  phase={phase}")
@@ -94,7 +96,7 @@ class FuelEfficiencyModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "FUEL_EFF"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
-            self._last_alert = None
+        if self._latch.current is not None:
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "FUEL_EFF"})

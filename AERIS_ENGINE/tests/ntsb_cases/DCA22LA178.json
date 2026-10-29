@@ -1,0 +1,99 @@
+{
+  "docket": {
+    "ntsb_id": "DCA22LA178",
+    "docket_project_id": 105714,
+    "summary": "Delta 1696 FLL-ATL, B757-251 N540US. Held ~17 min at FL270 for a microburst alert, then ILS 9R. After main-gear touchdown the PF over-rotated, the airplane lifted off again and struck its tail; the captain flew a go-around and landed on runway 10. Crew never sensed the strike; damage found ~5 h later.",
+    "perf_model": "B757-200",
+    "origin_icao": "KFLL",
+    "destination_icao": "KATL",
+    "origin_elev_ft": 65,
+    "destination_elev_ft": 1026,
+    "qnh_inhg": 30.22,
+    "vref_kts": 135,
+    "sources": [
+      "FDR Specialist's Factual Report, May 3 2023",
+      "Meteorology Specialist's Factual Report, Sep 29 2022 (ATL 5-min ASOS 2120: A3022)",
+      "Captain and FO statements, Aug 17 2022"
+    ]
+  },
+
+  "timeline": {
+    "hold_start":          "20:40:00",
+    "hold_end":            "20:57:00",
+    "first_touchdown":     "21:20:47",
+    "over_rotation_start": "21:20:49",
+    "second_liftoff":      "21:20:52",
+    "go_around_pitch_max": "21:20:56",
+    "final_touchdown":     "21:29:46"
+  },
+
+  "expect": {
+    "alerts": [
+      {
+        "id": "TAIL_STRIKE", "severity": "critical",
+        "between": ["21:20:47", "21:20:56"],
+        "why": "Pitch 10.6-12.0 deg with the mains on the runway after touchdown; the tail struck here (757-200 contact ~12 deg)."
+      }
+    ],
+    "silent": [
+      {
+        "id": "*", "between": ["19:50:00", "20:35:00"],
+        "why": "Cruise FL370-FL380, VNAV/FL CH step down to FL340: nothing abnormal happened."
+      },
+      {
+        "id": "UNCOMMANDED_DES", "between": ["19:25:00", "21:35:00"],
+        "why": "Every descent was flown in VNAV or FL CH with the autopilot engaged."
+      },
+      {
+        "id": "OVERSPEED", "between": ["19:34:00", "21:35:00"],
+        "why": "Max recorded CAS ~318 kt vs VMO 350. The 384-kt ground readings are ADC sentinels."
+      },
+      {
+        "id": "UNRELIABLE_SPD", "between": ["21:29:46", "21:35:00"],
+        "why": "Taxi-in: CAS sentinel at 384 kt must not read as an airspeed failure."
+      },
+      {
+        "id": "TAIL_STRIKE", "between": ["19:25:00", "21:20:40"],
+        "why": "Takeoff rotation and the approach stayed well inside tail clearance."
+      },
+      {
+        "id": "TAIL_STRIKE", "between": ["21:29:30", "21:35:00"],
+        "why": "Second landing on runway 10 was normal."
+      }
+    ],
+    "grace": [
+      {
+        "between": ["21:20:51", "21:29:46"],
+        "top_icao": "KATL",
+        "why": "Tail strike on the go-around at ATL: the nearest suitable airport is the one the aircraft is circling, and that is where it landed."
+      }
+    ]
+  },
+
+  "known_false_alarms": [
+    {"id": "CRUISE_ALT_DEV", "between": ["19:50:00", "20:35:00"],
+     "cause": "Compares against the profile's cruise altitude; ATC-assigned levels (FL370, FL380, FL340) aren't on this FDR frame, so every level change reads as a deviation."},
+    {"id": "OVERSPEED", "between": ["19:26:00", "19:34:00"],
+     "cause": "Predictive time-to-VMO extrapolates takeoff-roll and climb acceleration; fires at 93 kt on the runway."},
+    {"id": "GLIDE_RANGE", "between": ["19:26:00", "21:30:00"],
+     "cause": "Alerts whenever altitude x L/D is short, engines running or not — every departure and approach."},
+    {"id": "FLAP_OVERSPEED", "between": ["19:26:00", "21:30:00"],
+     "cause": "One VFE (flaps-30, 162 kt) applied to every flap setting; flaps 5-20 placards are much higher."},
+    {"id": "ALT_JERK", "between": ["19:26:18", "19:26:40"],
+     "cause": "Static-source position error during rotation moves recorded pressure altitude; the jerk check reads it as a g event."},
+    {"id": "BARO_SET", "between": ["19:25:00", "21:35:00"],
+     "cause": "Layer decided from indicated altitude with no hysteresis: ~300 ft band around 18,000 ft where neither QNH nor STD passes."},
+    {"id": "GLIDESLOPE", "between": ["21:10:00", "21:29:46"],
+     "cause": "Path computed as MSL altitude vs distance to the airport reference point — assumes a sea-level field and ignores ATL's 1,026 ft elevation and the runway threshold."},
+    {"id": "TERRAIN_CLOSURE", "between": ["19:26:00", "21:30:00"],
+     "cause": "Raw radio-altitude closure over rolling terrain, no Mode 2B landing-configuration desensitisation."},
+    {"id": "SINK_RATE", "between": ["21:10:00", "21:30:00"],
+     "cause": "-500/-800 fpm limits below 1,000 ft RA; a 3-degree ILS at 140 kt groundspeed is ~-750 fpm."},
+    {"id": "LOW_SPEED", "between": ["21:20:40", "21:35:00"],
+     "cause": "No flare/rollout inhibit: IAS below Vref in the flare and on the landing roll is normal."},
+    {"id": "ALT_LOSS_TKOF", "between": ["21:20:51", "21:22:00"],
+     "cause": "Peak radio altitude kept from the original takeoff and only reset in GROUND_ROLL, so the go-around after the bounce reads as a 1,500 ft sink."},
+    {"id": "UNSAFE_CONFIG", "between": ["21:29:46", "21:35:00"],
+     "cause": "Flaps retracted on taxi-in trigger the takeoff-configuration warning."}
+  ]
+}

@@ -133,6 +133,9 @@ class AircraftPerf:
     # Approach & landing
     vref_kts:          float = 0.0   # reference approach speed at typical landing weight
     max_crosswind_kts: float = 0.0   # max demonstrated crosswind component
+    # Pitch at which the tail contacts the runway with the main gear on the
+    # ground (struts compressed). 0 = unknown, tail-strike monitor stays off.
+    tailstrike_pitch_deg: float = 0.0
 
     # EGT overtemperature limits (°C, approximate; vary by engine variant)
     egt_limit_toga_c:    float = 950.0   # max EGT at TOGA
@@ -507,6 +510,108 @@ _DB: dict[str, AircraftPerf] = {
         glide_ratio=15.0,
         vref_kts=110.0,
         max_crosswind_kts=25.0,
+    ),
+
+    # Added for NTSB docket replays (DCA22LA178, N540US). Published figures
+    # from the type certificate / airport planning document where available;
+    # fuel flows and speeds marked estimated are typical-operation values,
+    # not AFM data.
+    "B757-200": AircraftPerf(
+        model="B757-200",
+        name="Boeing 757-200",
+        tow_lbs=200000.0,          # typical domestic sector, MTOW 255,000
+        wing_area_ft2=1994.0,
+        clmax_to=2.0,              # flaps 5-15, estimated
+        flap_to_norm=0.30,
+        flap_retract_norm=0.0,
+        rotation_pitch_deg=15.0,
+        rotation_rate_dps=2.5,
+        cruise_alt_ft=37000.0,
+        initial_climb_pitch=15.0,
+        climb_pitch=10.0,
+        climb_speed_kts=290.0,
+        engine_count=2,
+        thrust_total_lbs=76000.0,  # 2 x PW2037 / RB211-535E4 class
+        is_transport=True,
+        max_range_nm=3900,
+        min_route_nm=300,
+        max_route_nm=3000,
+        fuel_capacity_lbs=75000.0, # ~11,490 US gal
+        flap_to_deg=15.0,
+        flap_land_deg=30.0,
+        n1_idle_pct=22.0,
+        n1_toga_pct=100.0,
+        engine_type="turbofan_highbpr",
+        vmo_kts=350.0,
+        mmo=0.86,
+        ff_cruise_lbs_hr=3000.0,   # per engine, estimated
+        ff_climb_lbs_hr=5500.0,    # estimated
+        ff_descent_lbs_hr=700.0,   # estimated
+        ff_taxi_lbs_hr=700.0,      # estimated
+        ff_holding_lbs_hr=2500.0,  # estimated
+        holding_speed_kts=230.0,
+        vfe_kts=162.0,             # flaps 30
+        vle_kts=270.0,
+        vlo_kts=270.0,
+        va_kts=250.0,              # estimated
+        best_glide_kts=220.0,      # estimated
+        glide_ratio=17.0,          # estimated
+        vref_kts=135.0,            # flaps 25-30 at ~180,000 lb landing weight
+        max_crosswind_kts=35.0,    # estimated
+        # ~12 deg with the mains compressed. DCA22LA178 struck at a recorded
+        # 11.6-12.0 deg on the runway, consistent with that.
+        tailstrike_pitch_deg=12.0,
+    ),
+
+    # The DASHlink archive doesn't say what aircraft it is, so this profile was
+    # measured from the recordings by derive_perf_profile.py rather than copied
+    # from a type certificate. EGT limits sit 60 degC above observed normal
+    # since the real redline is unknown.
+    "DASHLINK": AircraftPerf(
+        model="DASHLINK",
+        name="DASHlink FDR fleet (4-engine regional jet, derived)",
+        tow_lbs=84000.0,           # estimated
+        wing_area_ft2=832.0,       # estimated
+        clmax_to=2.10,             # estimated
+        flap_to_norm=0.45,
+        flap_retract_norm=0.20,
+        rotation_pitch_deg=8.9,
+        rotation_rate_dps=3.0,
+        cruise_alt_ft=28500.0,
+        initial_climb_pitch=10.0,
+        climb_pitch=4.8,
+        climb_speed_kts=280.0,
+        engine_count=4,
+        thrust_total_lbs=31000.0,  # estimated
+        is_transport=True,
+        max_range_nm=1800,
+        min_route_nm=150,
+        max_route_nm=1200,
+        fuel_capacity_lbs=20900.0,
+        flap_to_deg=18.0,
+        flap_land_deg=33.0,
+        n1_idle_pct=24.9,
+        n1_toga_pct=95.1,
+        engine_type="turbofan_highbpr",
+        vmo_kts=300.0,             # the aircraft records its own limit (CASM)
+        mmo=0.78,                  # max seen 0.74, plus margin
+        ff_cruise_lbs_hr=1332.0,   # per engine
+        ff_climb_lbs_hr=1803.0,
+        ff_descent_lbs_hr=873.0,
+        ff_taxi_lbs_hr=348.0,
+        ff_holding_lbs_hr=1200.0,  # estimated
+        holding_speed_kts=210.0,   # estimated
+        vfe_kts=180.0,             # estimated
+        vle_kts=210.0,             # estimated
+        vlo_kts=190.0,             # estimated
+        va_kts=220.0,              # estimated
+        best_glide_kts=180.0,      # estimated
+        glide_ratio=16.0,          # estimated
+        vref_kts=114.2,
+        max_crosswind_kts=30.0,    # estimated
+        egt_limit_toga_c=674.0,
+        egt_limit_climb_c=674.0,
+        egt_limit_cruise_c=673.0,
     ),
 }
 

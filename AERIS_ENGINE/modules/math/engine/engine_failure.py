@@ -1,3 +1,4 @@
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
 
 
@@ -31,7 +32,8 @@ class EngineFailureModule:
 
     def __init__(self, ws=None, perf=None):
         self._ws = ws
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -43,7 +45,7 @@ class EngineFailureModule:
         if phase == "COMPLETE":
             await self._clear(); return
         if phase in self._SUPPRESS_PHASES or throttle < self._MIN_THROTTLE_PCT:
-            if self._last_alert:
+            if self._latch.current:
                 await self._clear()
             return
 
@@ -61,9 +63,9 @@ class EngineFailureModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(f"[ALERT] {alert}  n1={n1_list}  throttle={throttle:.0f}%  failed_engines={count}  phase={phase}")
@@ -75,7 +77,7 @@ class EngineFailureModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "ENGINE_FAILURE"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
-            self._last_alert = None
+        if self._latch.current is not None:
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "ENGINE_FAILURE"})

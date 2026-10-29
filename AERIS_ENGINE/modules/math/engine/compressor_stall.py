@@ -1,4 +1,5 @@
 import collections
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
 
 
@@ -41,7 +42,8 @@ class CompressorStallModule:
         self._prev_n1      = None
         self._prev_egt     = None
         self._stall_ticks  = 0
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -85,9 +87,9 @@ class CompressorStallModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(f"[ALERT] {alert}  n1={n1:.1f}  egt={egt:.0f}°C  stall_ticks={self._stall_ticks}  phase={phase}")
@@ -99,8 +101,8 @@ class CompressorStallModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "COMP_STALL"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
+        if self._latch.current is not None:
             self._stall_ticks = 0
-            self._last_alert  = None
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "COMP_STALL"})

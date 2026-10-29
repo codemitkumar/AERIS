@@ -40,6 +40,7 @@ from modules.math.attitude.bank_angle                   import BankAngleModule
 from modules.math.attitude.pitch_limit                  import PitchLimitModule
 from modules.math.attitude.sustained_g                  import SustainedGModule
 from modules.math.attitude.sideslip                     import SideslipModule
+from modules.math.attitude.tail_strike                  import TailStrikeModule
 
 # Pressurization modules (PRESS-1 to PRESS-3)
 from modules.math.pressurization.cabin_altitude         import CabinAltitudeModule
@@ -130,6 +131,7 @@ def register_all(bus: DataBus, ws=None, perf=None) -> None:
     PitchLimitModule(ws=ws).attach(bus)                      # ATT-3: pitch limit
     SustainedGModule(ws=ws).attach(bus)                      # ATT-4: sustained G
     SideslipModule(ws=ws).attach(bus)                        # ATT-5: sideslip
+    TailStrikeModule(ws=ws, perf=perf).attach(bus)           # ATT-6: tail strike
 
     # ── Pressurization ────────────────────────────────────────────────────────
     CabinAltitudeModule(ws=ws).attach(bus)                   # PRESS-1: cabin altitude

@@ -1,0 +1,46 @@
+{
+  "flights": [
+    {
+      "flight": "652200306252041.mat",
+      "duration_min": 150.8,
+      "rate_hz": 16.0,
+      "ticks": 144768,
+      "alerts": 33,
+      "by_id": {
+        "TERRAIN_CLOSURE": 10,
+        "GLIDE_RANGE": 4,
+        "FLAP_OVERSPEED": 3,
+        "GEAR_OVERSPEED": 3,
+        "CRUISE_ALT_DEV": 3,
+        "FUEL_IMBALANCE": 2,
+        "ICING_COND": 2,
+        "UNCOMMANDED_DES": 2,
+        "DENSITY_ALT": 1,
+        "ALT_LOSS_TKOF": 1,
+        "GLIDESLOPE": 1,
+        "SINK_RATE": 1
+      },
+      "by_severity": {
+        "warning": 15,
+        "critical": 18
+      }
+    }
+  ],
+  "total_alerts": 33,
+  "total_flight_hours": 2.51,
+  "alerts_per_flight_hour": 13.13,
+  "combined_by_id": {
+    "TERRAIN_CLOSURE": 10,
+    "GLIDE_RANGE": 4,
+    "FLAP_OVERSPEED": 3,
+    "GEAR_OVERSPEED": 3,
+    "CRUISE_ALT_DEV": 3,
+    "FUEL_IMBALANCE": 2,
+    "ICING_COND": 2,
+    "UNCOMMANDED_DES": 2,
+    "DENSITY_ALT": 1,
+    "ALT_LOSS_TKOF": 1,
+    "GLIDESLOPE": 1,
+    "SINK_RATE": 1
+  }
+}

@@ -2,28 +2,23 @@
 AERIS Engine — main entry point.
 
 Usage:
-    python main.py [model]
+    python main.py [model] [--source xplane|ntsb] [--flight ID_OR_PATH]
 
-  model  One of: c172p  A320  737  A330-223  787-8  B747  C130
-         Default: c172p
+  model   One of: c172p  A320  737  A330-223  787-8  B747  C130
+          Default: the aircraft loaded in X-Plane / the docket's own type
 
-Flight data is generated via FlightGenerator and streamed via WebSocket
-on ws://localhost:8765 at ~30 Hz.
+  --source xplane      live feed from a running X-Plane 11/12 (UDP 49000),
+                       the default; --flight is the destination ICAO.
+                       Emergencies come from X-Plane's failure menu.
+  --source ntsb        replay an NTSB docket FDR attachment, e.g.
+                       --flight DCA22LA178 (see scripts/fetch_ntsb_docket.py)
 
-Terminal injection commands (type while simulation is running):
-    inject ias [captain|fo|both] [rate]          — IAS ADC drift
-    inject alt_disagree [captain|fo|both] [rate] — altimeter ADC drift (ft/tick)
-    inject descent [rate_fpm]                    — uncommanded altitude loss
-    inject windshear [rate_fpm] [duration_s]     — windshear burst (auto-stops)
-    inject energy [alt_fpm] [spd_kts_s]          — total energy bleed
-    inject turbulence [amplitude_fpm] [freq_hz]  — turbulence / G oscillation
-    inject holding [duration_min] [rate_lbs_hr]  — unplanned ATC holding delay
-    inject notam [count]                         — airport/runway closure NOTAMs
-    clear [ias|alt_disagree|descent|windshear|energy|turbulence|holding|notam]  — clear one
-    clear                                        — clear all active injectors
-    status                                       — print injector states
+Flight data streams over WebSocket on ws://localhost:8765. The control panel
+at /controlPanel drives the same commands the terminal does — see
+communication/commands.py for the shared dispatcher.
 """
 
+import argparse
 import asyncio
 import json
 import os
@@ -33,13 +28,15 @@ if sys.stdout.encoding is None or sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-from data.ingestion.FlightGenerator       import FlightGenerator, Phase
 from data.ingestion.aircraft_performance  import get_performance, list_models
 from communication.websocket_server       import WebSocketServer
+from communication.commands               import (CommandDispatcher, parse_terminal,
+                                                  terminal_help)
 from core.data_bus                        import DataBus
 from modules.registry                     import register_all
 from core.alert_tracker                   import AlertTracker
 from emergencyInjector.injection_manager  import InjectionManager
+from config.settings                      import check_data_root
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -101,184 +98,177 @@ def _cross_check(state: dict) -> dict:
     }
 
 
-async def flight_loop(gen: FlightGenerator, ws: WebSocketServer, log_fp, bus: DataBus):
-    v1  = gen.perf.v1_kts
-    vr  = gen.perf.vr_kts
-    v2  = gen.perf.v2_kts
+class FlightSession:
+    """Owns whichever flight is currently running.
 
-    _v1_logged = False
-    _vr_logged = False
-    _v2_logged = False
+    The control panel can swap the source out from under a running flight, so
+    the generator, the bus and the modules are all rebuilt together — module
+    instances carry rolling windows and alert latches, and carrying those
+    across a source change would leak one flight's history into the next.
+    """
 
-    loop = asyncio.get_event_loop()
+    def __init__(self, ws: WebSocketServer, manager: InjectionManager):
+        self.ws = ws
+        self.manager = manager
+        self.gen = None
+        self.bus = None
+        self.task = None
+        self.log_path = None
+        self._resume = asyncio.Event()
+        self._resume.set()
+        # Set only when a flight runs to its end. Loading another flight
+        # cancels the current task, so the caller can't just await that task —
+        # it would see the cancellation and think the engine was finished.
+        self.ended = asyncio.Event()
 
-    while gen.phase != Phase.COMPLETE:
-        tick_start = loop.time()
+    @property
+    def paused(self) -> bool:
+        return not self._resume.is_set()
 
-        state = gen.step()
-        # Run DataBus modules before building `record`, so their added keys
-        # (assessment, diversion_recommendation) reach the WS feed/log too.
-        await bus.publish(state)
-        cross  = _cross_check(state)
-        record = {**state, **cross}
+    @property
+    def running(self) -> bool:
+        return self.task is not None and not self.task.done()
 
-        gs = state["groundspeed_kts"]
+    # ── building ─────────────────────────────────────────────────────────────
 
-        if not _v1_logged and gs >= v1:
-            _v1_logged = True
-            print(f"[FLIGHT] *** V1 ({v1:.1f} kts) reached — t={gen.time:.1f}s — GO/NO-GO decision point ***")
-        if not _vr_logged and gs >= vr:
-            _vr_logged = True
-            print(f"[FLIGHT] *** VR ({vr:.1f} kts) reached — t={gen.time:.1f}s — ROTATE ***")
-        if not _v2_logged and gs >= v2:
-            _v2_logged = True
-            print(f"[FLIGHT] *** V2 ({v2:.1f} kts) reached — t={gen.time:.1f}s — climb speed ***")
+    def build(self, source: str, model: str | None = None, flight: str | None = None):
+        import time as _time
 
-        if gen.should_log():
-            log_fp.write(json.dumps(record) + "\n")
-            log_fp.flush()
+        if source == "ntsb":
+            from data.ingestion.ntsb_fdr_loader import load_case, list_cases, ntsb_dir
+            from data.ingestion.faa_airport_loader import load_airports
 
-        if ws:
-            await ws.broadcast(record)
+            cases = list_cases()
+            case = flight or (cases[0] if cases else None)
+            if case is None:
+                raise FileNotFoundError(
+                    f"No NTSB dockets with FDR data under {ntsb_dir()}. "
+                    f"Fetch one with scripts/fetch_ntsb_docket.py <ProjectID>.")
+            gen = load_case(case, airports=load_airports(), emergency_fn=self.manager)
+            perf = gen.perf
+            gen.source_label = f"ntsb:{gen.meta.get('ntsb_id') or case}"
+            print(f"[AERIS] Replaying NTSB {gen.source_label[5:]} ({perf.name})  "
+                  f"{gen.flight.duration_s / 60:.1f} min @ {1 / gen.dt:g} Hz")
+        elif source == "xplane":
+            from data.ingestion.xplane_loader import XPlaneLive
 
-        # Real-time pacing: sleep only the remainder of the tick budget
-        # so a 2-hour flight takes exactly 2 hours of wall-clock time.
-        remaining = gen.dt - (loop.time() - tick_start)
-        if remaining > 0:
-            await asyncio.sleep(remaining)
+            gen = XPlaneLive(perf=get_performance(model, airport_elev_ft=0.0) if model else None,
+                             dest_icao=flight, emergency_fn=self.manager)
+            perf = gen.perf
+            gen.source_label = f"xplane:{gen.acf_icao or perf.model}"
+            print(f"[AERIS] Live from X-Plane: {gen.acf_icao or '?'} as {perf.name} "
+                  f"@ {1 / gen.dt:g} Hz")
+        else:
+            raise ValueError(f"Unknown source '{source}' — use xplane or ntsb")
 
-    print("[AERIS] Flight complete.")
+        tracker = AlertTracker(self.ws)
+        bus = DataBus()
+        register_all(bus, ws=tracker, perf=perf)
 
+        sim_dir = os.path.join(BASE_DIR, "simulationdata")
+        os.makedirs(sim_dir, exist_ok=True)
+        tag = source
 
-async def terminal_command_reader(manager: InjectionManager, gen: FlightGenerator):
-    """Read fault-injection commands from stdin while the simulation runs."""
-    loop = asyncio.get_event_loop()
-    print(
-        "[CMD] Terminal ready — type a command:\n"
-        "  inject ias [captain|fo|both] [rate]\n"
-        "  inject alt_disagree [captain|fo|both] [rate_ft_per_tick]\n"
-        "  inject descent [rate_fpm]\n"
-        "  inject windshear [rate_fpm] [duration_s]\n"
-        "  inject energy [alt_fpm] [spd_kts_s]\n"
-        "  inject turbulence [amplitude_fpm] [freq_hz]\n"
-        "  inject fuel_leak [rate_lbs_hr] [left|right|center|all]\n"
-        "  inject holding [duration_min] [rate_lbs_hr]\n"
-        "  inject notam [count]\n"
-        "  clear [ias|alt_disagree|descent|windshear|energy|turbulence|fuel_leak|holding|notam]\n"
-        "  clear   (clears all)\n"
-        "  status"
-    )
+        self.gen = gen
+        self.bus = bus
+        self.perf = perf
+        self.source = source
+        self.sim_dir = sim_dir
+        self.log_path = os.path.join(sim_dir, f"_tmp_{tag}_{int(_time.time())}.jsonl")
 
-    while True:
+        origin = gen.origin.get("iata") or gen.origin.get("icao") or "?"
+        dest = gen.dest.get("iata") or gen.dest.get("icao") or "?"
+        print(f"[AERIS] Route    : {origin} → {dest}  ({gen.route_distance_nm:.0f} nm)")
+        return gen
+
+    # ── running ──────────────────────────────────────────────────────────────
+
+    async def start(self):
+        await self.stop()
+        self._resume.set()
+        self.ended.clear()
+        await self.ws.broadcast_meta({
+            "topic":             "flight_meta",
+            "model":             self.perf.name,
+            "source":            self.gen.source_label,
+            "origin_icao":       self.gen.origin.get("icao", ""),
+            "destination_icao":  self.gen.dest.get("icao", ""),
+            "route_distance_nm": round(self.gen.route_distance_nm, 1),
+            "departure_heading": round(self.gen.departure_heading, 1),
+            "landing_heading":   round(self.gen.landing_heading, 1),
+            "sample_rate_hz":    round(1.0 / self.gen.dt, 3),
+        })
+        self.task = asyncio.create_task(self._run())
+
+    async def stop(self):
+        if self.task and not self.task.done():
+            self.task.cancel()
+            try:
+                await self.task
+            except asyncio.CancelledError:
+                pass
+        self.task = None
+
+    def pause(self):
+        self._resume.clear()
+
+    def resume(self):
+        self._resume.set()
+
+    async def _run(self):
+        gen, bus = self.gen, self.bus
+        loop = asyncio.get_event_loop()
+
         try:
-            line = await loop.run_in_executor(None, sys.stdin.readline)
-            if not line:
-                break
-            parts = line.strip().split()
-            if not parts:
-                continue
+            await self._fly(gen, bus, loop)
+        except asyncio.CancelledError:
+            # Superseded by another flight — the partial log is of no use.
+            if self.log_path and os.path.exists(self.log_path):
+                os.remove(self.log_path)
+            raise
 
-            cmd = parts[0].lower()
+        print("[AERIS] Flight complete.")
+        await self._finalise()
+        self.ended.set()
 
-            # ── inject ───────────────────────────────────────────────────────
-            if cmd == "inject":
-                if len(parts) < 2:
-                    print("[CMD] inject needs a fault type — see help above")
-                    continue
+    async def _fly(self, gen, bus, loop):
+        with open(self.log_path, "w", encoding="utf-8") as log_fp:
+            while not gen.finished:
+                if self.paused:
+                    await self._resume.wait()
 
-                fault = parts[1].lower()
+                tick_start = loop.time()
+                state = gen.step()
+                # Modules run before `record` is built so their added keys
+                # (assessment, diversion_recommendation) reach the feed too.
+                await bus.publish(state)
+                record = {**state, **_cross_check(state)}
 
-                # Backward-compatible: 'inject captain -0.1' still means IAS
-                if fault in ("captain", "fo", "both"):
-                    side = fault
-                    rate = float(parts[2]) if len(parts) > 2 else -0.1
-                    manager.ias.start(side=side, rate=rate)
+                if gen.should_log():
+                    log_fp.write(json.dumps(record) + "\n")
+                    log_fp.flush()
 
-                elif fault == "ias":
-                    side = parts[2] if len(parts) > 2 else "captain"
-                    rate = float(parts[3]) if len(parts) > 3 else -0.1
-                    manager.ias.start(side=side, rate=rate)
+                await self.ws.broadcast(record)
 
-                elif fault == "alt_disagree":
-                    side = parts[2] if len(parts) > 2 else "captain"
-                    rate = float(parts[3]) if len(parts) > 3 else 2.0
-                    manager.alt_disagree.start(side=side, rate=rate)
+                # Sleep only the remainder of the tick budget, so a 2-hour
+                # flight takes two hours of wall clock.
+                remaining = gen.dt - (loop.time() - tick_start)
+                if remaining > 0:
+                    await asyncio.sleep(remaining)
 
-                elif fault == "descent":
-                    rate_fpm = float(parts[2]) if len(parts) > 2 else 600.0
-                    manager.descent.start(rate_fpm=rate_fpm)
-
-                elif fault == "windshear":
-                    rate_fpm  = float(parts[2]) if len(parts) > 2 else 4_000.0
-                    duration  = float(parts[3]) if len(parts) > 3 else 15.0
-                    manager.windshear.start(rate_fpm=rate_fpm, duration_s=duration)
-
-                elif fault == "energy":
-                    alt_fpm   = float(parts[2]) if len(parts) > 2 else 400.0
-                    spd_kts_s = float(parts[3]) if len(parts) > 3 else 0.5
-                    manager.energy.start(alt_rate_fpm=alt_fpm, spd_rate_kts_s=spd_kts_s)
-
-                elif fault == "turbulence":
-                    amp  = float(parts[2]) if len(parts) > 2 else 600.0
-                    freq = float(parts[3]) if len(parts) > 3 else 0.25
-                    manager.turbulence.start(amplitude_fpm=amp, freq_hz=freq)
-
-                elif fault == "fuel_leak":
-                    rate = float(parts[2]) if len(parts) > 2 else 400.0
-                    tank = parts[3]        if len(parts) > 3 else "left"
-                    manager.fuel_leak.start(rate_lbs_hr=rate, tank=tank)
-
-                elif fault == "holding":
-                    duration = float(parts[2]) * 60.0 if len(parts) > 2 else None
-                    rate     = float(parts[3])         if len(parts) > 3 else None
-                    manager.holding.start(gen, duration_s=duration, rate_lbs_hr=rate)
-
-                elif fault == "notam":
-                    count = int(parts[2]) if len(parts) > 2 else None
-                    manager.notam.start(gen, count=count)
-
-                else:
-                    print(f"[CMD] Unknown fault type '{fault}'")
-
-            # ── clear ────────────────────────────────────────────────────────
-            elif cmd == "clear":
-                target = parts[1].lower() if len(parts) > 1 else "all"
-                _clear_map = {
-                    "ias":          manager.ias,
-                    "alt_disagree": manager.alt_disagree,
-                    "descent":      manager.descent,
-                    "windshear":    manager.windshear,
-                    "energy":       manager.energy,
-                    "turbulence":   manager.turbulence,
-                    "fuel_leak":    manager.fuel_leak,
-                    "holding":      manager.holding,
-                    "notam":        manager.notam,
-                }
-                if target in _clear_map:
-                    _clear_map[target].stop()
-                else:
-                    manager.clear_all()
-
-            # ── status ───────────────────────────────────────────────────────
-            elif cmd == "status":
-                print(manager.status(gen))
-
-            else:
-                print(f"[CMD] Unknown command '{cmd}' — try 'inject', 'clear', or 'status'")
-
-        except (EOFError, KeyboardInterrupt):
-            break
-        except Exception as exc:
-            print(f"[CMD] Error: {exc}")
+    async def _finalise(self):
+        final = _build_final_output(
+            self.gen, self.log_path, self.sim_dir,
+            self.manager.injected_summary, self.manager.notam.closures,
+        )
+        print(f"[AERIS] Saved → {final}")
+        if self.manager.injected_summary:
+            print(f"[AERIS] Injected emergencies recorded: {self.manager.injected_summary}")
+        await self.ws.broadcast({"topic": "flight_complete", "file": os.path.basename(final)})
 
 
-def _build_final_output(
-    gen: FlightGenerator,
-    jsonl_path: str,
-    sim_dir: str,
-    injected_emergency: str | None = None,
-    notam_closures: list[dict] | None = None,
-) -> str:
+def _build_final_output(gen, jsonl_path, sim_dir,
+                        injected_emergency=None, notam_closures=None) -> str:
     """Read the temp JSONL, wrap in the final schema, write JSON, delete JSONL."""
     import time as _time
 
@@ -303,9 +293,9 @@ def _build_final_output(
         "destination":   apt_code(gen.dest),
         "distance":      f"{dist_nm:.0f} nm",
         "expectedTime":  f"{hours}h {minutes}m",
+        "source":        getattr(gen, "source_label", "unknown"),
     }
 
-    # Only add the key when an emergency was actually injected
     if injected_emergency:
         output["injectedEmergency"] = injected_emergency
 
@@ -331,87 +321,72 @@ def _build_final_output(
     return final_path
 
 
-async def async_main(model: str):
+async def terminal_command_reader(dispatcher: CommandDispatcher):
+    """Read injection commands from stdin while the simulation runs."""
+    loop = asyncio.get_event_loop()
+    print(terminal_help())
+
+    while True:
+        try:
+            line = await loop.run_in_executor(None, sys.stdin.readline)
+            if not line:
+                break
+            msg = parse_terminal(line)
+            if msg:
+                await dispatcher.handle(msg)
+        except (EOFError, KeyboardInterrupt):
+            break
+        except Exception as exc:
+            print(f"[CMD] Error: {exc}")
+
+
+async def async_main(args):
+    check_data_root()
+
+    ws = WebSocketServer(host="0.0.0.0", port=8765)
+    manager = InjectionManager()
+    session = FlightSession(ws, manager)
+    dispatcher = CommandDispatcher(manager, ws)
+    dispatcher.attach_session(session, default_model=args.model)
+    ws.register_command_handler(dispatcher.handle)
+
     try:
-        perf = get_performance(model, airport_elev_ft=0.0)
-    except KeyError:
-        print(f"[ERROR] Unknown model '{model}'.  Available: {list_models()}")
+        session.build(args.source, model=args.model, flight=args.flight)
+    except (KeyError, FileNotFoundError, ConnectionError) as exc:
+        if isinstance(exc, KeyError):
+            print(f"[ERROR] Unknown model '{args.model}'.  Available: {list_models()}")
+        else:
+            print(f"[ERROR] {exc}")
         return
 
-    print(
-        f"[AERIS] Aircraft : {perf.name}\n"
-        f"[AERIS] V1={perf.v1_kts:.1f}  VR={perf.vr_kts:.1f}  "
-        f"V2={perf.v2_kts:.1f} kts  →  cruise FL{int(perf.cruise_alt_ft/100):03d}"
-    )
+    dispatcher.bind(session.gen)
 
-    manager = InjectionManager()
+    ws_task = asyncio.create_task(ws.start())
+    cmd_task = asyncio.create_task(terminal_command_reader(dispatcher))
 
-    # 5 % chance of a random fault being injected automatically during flight
-    if manager.configure_auto_inject(probability=0.05):
-        print("[AERIS] Auto-inject ARMED — a fault will fire during flight")
-    else:
-        print("[AERIS] Auto-inject rolled clean — no automatic fault this flight")
+    await session.start()
+    await session.ended.wait()
 
-    # 70 % chance this flight carries NOTAM airport/runway closures
-    if manager.configure_notam_injection(probability=0.7):
-        print("[AERIS] NOTAM injection ARMED — closures will be seeded pre-departure")
-    else:
-        print("[AERIS] NOTAM injection rolled clean — no closures this flight")
-
-    gen     = FlightGenerator(perf, dt=1/30, emergency_fn=manager)
-    ws      = WebSocketServer(host="0.0.0.0", port=8765)
-    tracker = AlertTracker(ws)
-    bus     = DataBus()
-    register_all(bus, ws=tracker, perf=perf)
-
-    import time as _time
-    sim_dir  = os.path.join(BASE_DIR, "simulationdata")
-    os.makedirs(sim_dir, exist_ok=True)
-    tmp_path = os.path.join(sim_dir, f"_tmp_{model}_{int(_time.time())}.jsonl")
-
-    origin_code = gen.origin.get("iata") or gen.origin.get("icao") or "?"
-    dest_code   = gen.dest.get("iata")   or gen.dest.get("icao")   or "?"
-    print(
-        f"[AERIS] Route    : {origin_code} → {dest_code}  "
-        f"({gen.route_distance_nm:.0f} nm)  "
-        f"cruise interval {gen._log_interval:.0f} s"
-    )
-
-    ws_task  = asyncio.create_task(ws.start())
-    cmd_task = asyncio.create_task(terminal_command_reader(manager, gen))
-
-    await ws.broadcast_meta({
-        "topic":              "flight_meta",
-        "model":              perf.name,
-        "origin_icao":        gen.origin["icao"],
-        "destination_icao":   gen.dest["icao"],
-        "route_distance_nm":  round(gen.route_distance_nm, 1),
-        "departure_heading":  round(gen.departure_heading, 1),
-        "landing_heading":    round(gen.landing_heading, 1),
-    })
-
-    with open(tmp_path, "w", encoding="utf-8") as log_fp:
-        await flight_loop(gen, ws, log_fp, bus)
-
+    await session.stop()
     ws_task.cancel()
     cmd_task.cancel()
 
-    final = _build_final_output(
-        gen, tmp_path, sim_dir, manager.injected_summary, manager.notam.closures,
-    )
-    print(f"[AERIS] Saved → {final}")
-
-    if manager.injected_summary:
-        print(f"[AERIS] Injected emergencies recorded: {manager.injected_summary}")
-
-    if manager.notam.closures:
-        icaos = ", ".join(c["icao"] for c in manager.notam.closures)
-        print(f"[AERIS] NOTAM closures this flight: {icaos}")
-
 
 def main():
-    model = sys.argv[1] if len(sys.argv) > 1 else "c172p"
-    asyncio.run(async_main(model))
+    ap = argparse.ArgumentParser(description="AERIS engine")
+    ap.add_argument("model", nargs="?", default=None,
+                    help=f"aircraft profile ({', '.join(list_models())}); "
+                         f"default: the aircraft loaded in X-Plane")
+    ap.add_argument("--source", choices=("xplane", "ntsb"), default="xplane",
+                    help="fly live in X-Plane, or replay an NTSB docket")
+    ap.add_argument("--flight", default=None,
+                    help="xplane: destination ICAO; ntsb: docket id or path")
+    args = ap.parse_args()
+
+    try:
+        asyncio.run(async_main(args))
+    except KeyboardInterrupt:
+        print("\n[AERIS] Stopped.")
 
 
 if __name__ == "__main__":

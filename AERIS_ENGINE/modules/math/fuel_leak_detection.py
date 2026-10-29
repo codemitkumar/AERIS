@@ -1,5 +1,6 @@
-from collections import deque
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
+from core.rate import TimeWindow, tick_dt
 
 
 class FuelLeakDetectionModule:
@@ -44,8 +45,8 @@ class FuelLeakDetectionModule:
     _WARN_FLOOR    = 30.0   # lbs — minimum absolute excess to alert (GA-safe)
     _CRIT_FLOOR    = 70.0   # lbs
 
-    # Smoothing window: 30 ticks × (1/30 s) = 1 s moving average on fuel_total
-    _SMOOTH_WIN = 30
+    # 1 s moving average on fuel_total, sized from the feed's actual rate
+    _SMOOTH_WIN_S = 1.0
 
     _ALERT_MAP = {
         "FUEL_LEAK_WARNING": {
@@ -66,9 +67,9 @@ class FuelLeakDetectionModule:
         self._ws            = ws
         self._initial_lbs   = None
         self._expected_burn = 0.0       # lbs accumulated from engine meters
-        self._dt            = 1 / 30    # assumed tick interval
-        self._last_alert: str | None = None
-        self._fuel_buf: deque[float] = deque(maxlen=self._SMOOTH_WIN)
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
+        self._fuel_buf = TimeWindow(self._SMOOTH_WIN_S)
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -92,10 +93,10 @@ class FuelLeakDetectionModule:
             return
 
         # Integrate engine consumption
-        self._expected_burn += ff_hr * self._dt / 3600.0
+        self._expected_burn += ff_hr * tick_dt(state) / 3600.0
 
         # Smooth tank reading to suppress gauge noise
-        self._fuel_buf.append(total_lbs)
+        self._fuel_buf.push(state, total_lbs)
         smooth_total = sum(self._fuel_buf) / len(self._fuel_buf)
 
         actual_missing = self._initial_lbs - smooth_total
@@ -115,9 +116,9 @@ class FuelLeakDetectionModule:
         else:
             alert = None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         leak_rate_lbs_hr = leak_estimate / (self._expected_burn / max(0.001, ff_hr)) * 3600.0 if ff_hr > 0 else 0.0
 
@@ -138,7 +139,7 @@ class FuelLeakDetectionModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "FUEL_LEAK"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
-            self._last_alert = None
+        if self._latch.current is not None:
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "FUEL_LEAK"})

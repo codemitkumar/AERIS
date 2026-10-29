@@ -8,3 +8,6 @@ __pycache__/
 
 # Generated simulation datasets
 AERIS_ENGINE/simulationdata/
+
+# NTSB docket downloads (FDR CSVs, reports) — fetched locally, not committed
+AERIS_ENGINE/data/ntsb/

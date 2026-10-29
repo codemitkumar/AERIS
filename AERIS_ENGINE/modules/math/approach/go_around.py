@@ -1,3 +1,4 @@
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
 
 
@@ -33,7 +34,8 @@ class GoAroundAdvisoryModule:
         self._ws   = ws
         self._vref = perf.vref_kts        if perf else 0.0
         self._max_xw = perf.max_crosswind_kts if perf else 25.0
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -45,7 +47,7 @@ class GoAroundAdvisoryModule:
         if phase == "COMPLETE":
             await self._clear(); return
         if phase != "DESCENT" or alt > self._FINAL_ALT_FT:
-            if self._last_alert:
+            if self._latch.current:
                 await self._clear()
             return
 
@@ -73,9 +75,9 @@ class GoAroundAdvisoryModule:
 
         alert = "GO_AROUND_ADVISORY" if score >= self._CRIT_SCORE else None
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-        self._last_alert = alert
 
         if alert:
             print(f"[ALERT] {alert}  score={score}/5  alt={alt:.0f} ft  phase={phase}")
@@ -87,7 +89,7 @@ class GoAroundAdvisoryModule:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "GO_AROUND"})
 
     async def _clear(self) -> None:
-        if self._last_alert is not None:
-            self._last_alert = None
+        if self._latch.current is not None:
+            self._latch.reset()
             if self._ws:
                 await self._ws.broadcast_alert({"topic": "alert_clear", "id": "GO_AROUND"})

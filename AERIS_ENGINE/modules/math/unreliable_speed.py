@@ -1,3 +1,4 @@
+from core.alerting import UNCHANGED, AlertLatch
 from core.data_bus import DataBus
 
 
@@ -33,7 +34,8 @@ class UnreliableSpeedModule:
 
     def __init__(self, ws=None):
         self._ws = ws
-        self._last_alert: str | None = None
+        self._latch = AlertLatch(
+            severity_of=lambda a: self._ALERT_MAP.get(a, {}).get("severity", "warning"))
 
     def attach(self, bus: DataBus) -> None:
         bus.subscribe(self.on_state)
@@ -59,10 +61,9 @@ class UnreliableSpeedModule:
         else:
             alert = "UNRELIABLE_IAS_BOTH"
 
-        if alert == self._last_alert:
+        alert = self._latch.update(state, alert)
+        if alert is UNCHANGED:
             return
-
-        self._last_alert = alert
 
         if alert:
             speed_ctx = self._speed_context(gs, v1, vr, phase)

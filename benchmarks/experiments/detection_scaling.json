@@ -1,0 +1,47 @@
+{
+  "rows": [
+    {
+      "modules": 1,
+      "mean_ms": 0.0888,
+      "p99_ms": 0.2027
+    },
+    {
+      "modules": 5,
+      "mean_ms": 0.1738,
+      "p99_ms": 0.4124
+    },
+    {
+      "modules": 10,
+      "mean_ms": 0.2407,
+      "p99_ms": 0.5892
+    },
+    {
+      "modules": 20,
+      "mean_ms": 0.2181,
+      "p99_ms": 0.6812
+    },
+    {
+      "modules": 30,
+      "mean_ms": 0.258,
+      "p99_ms": 0.5821
+    },
+    {
+      "modules": 40,
+      "mean_ms": 0.2828,
+      "p99_ms": 0.5938
+    },
+    {
+      "modules": 50,
+      "mean_ms": 0.2051,
+      "p99_ms": 0.4284
+    },
+    {
+      "modules": 54,
+      "mean_ms": 0.1802,
+      "p99_ms": 0.3462
+    }
+  ],
+  "slope_us_per_module": 1.201,
+  "intercept_us": 174.4,
+  "r2": 0.16659
+}

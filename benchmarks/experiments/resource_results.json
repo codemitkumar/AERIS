@@ -1,0 +1,16 @@
+{
+  "flight": "652200306252041.mat",
+  "rate_hz": 16.0,
+  "ticks": 20000,
+  "wall_s": 23.267,
+  "cpu_s": 22.219,
+  "throughput_ticks_per_s": 859.6,
+  "realtime_factor": 53.7,
+  "cpu_us_per_tick": 1110.94,
+  "utilisation_pct_one_core": 1.777,
+  "rss_start_mb": 63.2,
+  "rss_loaded_mb": 119.5,
+  "rss_end_mb": 119.8,
+  "rss_peak_mb": 139.1,
+  "rss_growth_during_replay_mb": 0.29
+}

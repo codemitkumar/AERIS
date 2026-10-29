@@ -78,6 +78,10 @@ _DEFAULT_CONDITION_MODIFIERS = {
     # No live alert raises this yet — example of the plug-in point for a
     # future flight-control failure detector.
     "DIRECTIONAL_CONTROL_LOSS": {"max_turn_deg": 45.0, "prefer_larger_airport": True},
+    # Tail strike checklist: don't pressurise, land at the nearest suitable
+    # airport. It happens on a runway, so that runway's airport is right
+    # there — return to it rather than press on to something ahead.
+    "TAIL_STRIKE": {"prefer_larger_airport": True, "return_to_field": True},
 }
 
 _TURN_FUEL_PENALTY_FRAC = 0.05   # full 180 deg turn adds ~5% to effective distance
@@ -99,6 +103,10 @@ _RELAXATION_LEVELS = (1.0, 0.7, 0.4, 0.15, 0.0)
 # filters, so an anchored airport that's genuinely unusable is still excluded.
 _EARLY_FLIGHT_WINDOW_S = 20 * 60  # origin anchor fades out over 20 min after departure
 _ANCHOR_TURN_DISCOUNT  = 0.15     # an anchored turn counts as 15% of its real angle
+# A condition with return_to_field anchors the origin or destination fully
+# while the aircraft is still this close to it — i.e. the event happened on
+# its runway or in its circuit.
+_RETURN_TO_FIELD_NM    = 30.0
 
 
 def _lerp(floor, full, relax):
@@ -139,6 +147,7 @@ def _resolve_modifiers(active_conditions, registry):
     fuel_burn_multiplier = 1.0
     fuel_margin_buffer = 1.0
     prefer_larger_airport = False
+    return_to_field = False
     for cond in active_conditions:
         mods = registry.get(cond)
         if not mods:
@@ -151,7 +160,10 @@ def _resolve_modifiers(active_conditions, registry):
             fuel_margin_buffer = max(fuel_margin_buffer, mods["fuel_margin_buffer"])
         if mods.get("prefer_larger_airport"):
             prefer_larger_airport = True
-    return max_turn_deg, fuel_burn_multiplier, fuel_margin_buffer, prefer_larger_airport
+        if mods.get("return_to_field"):
+            return_to_field = True
+    return (max_turn_deg, fuel_burn_multiplier, fuel_margin_buffer,
+            prefer_larger_airport, return_to_field)
 
 
 def _closure_status(apt, notam_closed_airports, notam_closed_runways):
@@ -215,7 +227,7 @@ class DiversionSelector:
     """Reference implementation of GRACE.
 
     Only touches a handful of dict keys (see select()) — no DataBus or
-    FlightGenerator coupling. decision/decision_engine.py wires it in.
+    flight-source coupling. decision/decision_engine.py wires it in.
     """
 
     def __init__(self):
@@ -261,7 +273,8 @@ class DiversionSelector:
             severity = "MODERATE"
         active_conditions = active_conditions or []
 
-        max_turn_deg, fuel_burn_mult, fuel_margin_buf, prefer_larger = _resolve_modifiers(
+        (max_turn_deg, fuel_burn_mult, fuel_margin_buf,
+         prefer_larger, return_to_field) = _resolve_modifiers(
             active_conditions, self._condition_modifiers
         )
         configured = {
@@ -291,6 +304,7 @@ class DiversionSelector:
             "go_around_strength": (
                 1.0 if "GO_AROUND" in active_conditions and state.get("destination_icao") else 0.0
             ),
+            "return_to_field":       return_to_field,
         }
 
         weights = self._severity_weights[severity]
@@ -349,6 +363,9 @@ class DiversionSelector:
             anchor_strength, anchor = ctx["origin_strength"], "origin"
         if icao and icao == ctx["destination_icao"] and ctx["go_around_strength"] > anchor_strength:
             anchor_strength, anchor = ctx["go_around_strength"], "go_around"
+        if (ctx["return_to_field"] and icao and distance_nm <= _RETURN_TO_FIELD_NM
+                and icao in (ctx["origin_icao"], ctx["destination_icao"])):
+            anchor_strength, anchor = 1.0, "return_to_field"
 
         turn_discount = 1.0 - anchor_strength * (1.0 - _ANCHOR_TURN_DISCOUNT)
         turn_scoring = turn * turn_discount
@@ -399,6 +416,8 @@ class DiversionSelector:
             bits.append("departure airport — briefed return-to-field option")
         elif candidate["anchor"] == "go_around":
             bits.append("go-around field — already established, no reason to look elsewhere")
+        elif candidate["anchor"] == "return_to_field":
+            bits.append("field the event happened at — nearest suitable, return and land")
         bits.append(f"{candidate['distance_nm']:.0f} nm")
         bits.append(f"{candidate['turn_deg']:.0f}° turn")
         if candidate["runway_closures"]:
